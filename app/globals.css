@@ -1,0 +1,90 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    font-family: var(--font-kantumruy), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-battambang), var(--font-kantumruy), sans-serif;
+  }
+}
+
+/* Custom styles for Attendance Badges */
+.badge-early {
+  @apply bg-emerald-100 text-emerald-800 border border-emerald-300 font-medium;
+}
+
+.badge-ontime {
+  @apply bg-blue-100 text-blue-800 border border-blue-300 font-medium;
+}
+
+.badge-late {
+  @apply bg-rose-100 text-rose-800 border border-rose-300 font-medium;
+}
+
+.badge-earlyleave {
+  @apply bg-amber-100 text-amber-800 border border-amber-300 font-medium;
+}
+
+/* Face guide oval scanner animation */
+@keyframes scan-pulse {
+  0%, 100% {
+    opacity: 0.8;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(1.02);
+  }
+}
+
+.animate-scan-pulse {
+  animation: scan-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* QR Code laser scan animation */
+@keyframes scan-laser {
+  0% {
+    top: 15%;
+    opacity: 0.8;
+  }
+  50% {
+    top: 85%;
+    opacity: 1;
+  }
+  100% {
+    top: 15%;
+    opacity: 0.8;
+  }
+}
+
+.animate-scan-laser {
+  animation: scan-laser 2s ease-in-out infinite;
+}
+
+/* Print styles for QR Code Standees */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  
+  .no-print {
+    display: none !important;
+  }
+  
+  .print-page-break {
+    page-break-after: always;
+    break-after: page;
+  }
+
+  .qr-stand-card {
+    box-shadow: none !important;
+    border: 1px solid #ccc !important;
+    max-width: 100% !important;
+    margin: 0 auto !important;
+  }
+}

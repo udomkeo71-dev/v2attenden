@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2563eb" />
+      <stop offset="100%" stop-color="#4f46e5" />
+    </linearGradient>
+  </defs>
+  <!-- Background Rounded Squircle -->
+  <rect width="512" height="512" rx="128" fill="url(#grad)" />
+  <!-- Shield Outline -->
+  <path d="M256 90 L380 140 L380 250 C380 340 256 420 256 420 C256 420 132 340 132 250 L132 140 Z" fill="#ffffff" opacity="0.15" />
+  <path d="M256 110 L360 152 L360 250 C360 326 256 394 256 394 C256 394 152 326 152 250 L152 152 Z" fill="#ffffff" />
+  <!-- V2 Text & Checkmark -->
+  <path d="M210 260 L245 295 L315 210" fill="none" stroke="#2563eb" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+  <text x="256" y="470" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif" font-size="42" font-weight="900" fill="#ffffff" letter-spacing="4">V2 ATTENDANCE</text>
+</svg>
