@@ -210,38 +210,50 @@ export default function CheckinMeDashboardPage() {
         V2_BRANCHES[currentBranchId] ||
         V2_BRANCHES.BKK;
 
-      // Determine coords
-      let lat = branch.latitude;
-      let lng = branch.longitude;
-      if (loadedSettings.gpsSimMode === "INSIDE") {
-        lat += 0.0001;
-        lng += 0.0001;
-      } else if (loadedSettings.gpsSimMode === "OUTSIDE") {
-        lat += 0.003;
-        lng += 0.003;
+      // Determine real coords (Strict: No fake inside fallback!)
+      let lat = 0;
+      let lng = 0;
+      if (loadedSettings.gpsSimMode === "OUTSIDE") {
+        lat = branch.latitude + 0.003;
+        lng = branch.longitude + 0.003;
       } else if (typeof window !== "undefined" && "geolocation" in navigator) {
         try {
           const pos = await new Promise<GeolocationPosition>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 3000 });
+            navigator.geolocation.getCurrentPosition(resolve, reject, {
+              enableHighAccuracy: true,
+              timeout: 8000,
+              maximumAge: 0,
+            });
           });
           lat = pos.coords.latitude;
           lng = pos.coords.longitude;
         } catch {
-          // Fallback to branch coords
+          // GPS failed or refused
         }
+      }
+
+      if (lat === 0 && lng === 0) {
+        soundEffects.playError();
+        alert(
+          "⛔ មិនអាចកត់ត្រាវត្តមានបានទេ — ខ្វះទីតាំង GPS!\n\n" +
+          "ប្រព័ន្ធមិនទាន់ទទួលបានទីតាំង GPS ពិតប្រាកដលើទូរស័ព្ទរបស់អ្នកឡើយ។\n" +
+          "សូមបើកមុខងារ GPS (Location) លើទូរស័ព្ទរបស់អ្នក និងចុច 'Allow' (អនុញ្ញាត) ឱ្យកម្មវិធីប្រើប្រាស់ទីតាំង។"
+        );
+        return;
       }
 
       const geofence = validateBranchGeofence(lat, lng, branch);
 
       // ⛔ STRICT GEOFENCE ENFORCEMENT: លើសពី ១០០m មិនអាចស្កេនបានទេ
-      if (!geofence.isWithinGeofence || geofence.distanceMeters > 100) {
+      if (!geofence.isWithinGeofence || geofence.distanceMeters > (branch.radiusMeters || 100)) {
         soundEffects.playError();
         alert(
-          `⛔ មិនអាចកត់ត្រាវត្តមានបានទេ — លោកអ្នកនៅក្រៅបរិវេណសាខា!\n\n` +
-          `• សាខា៖ ${branch.nameKhmer}\n` +
+          `⛔ បដិសេធការកត់ត្រាវត្តមានជាដាច់ខាត!\n\n` +
+          `• បុគ្គលិក៖ ${staff.name}\n` +
+          `• សាខាកំណត់៖ ${branch.nameKhmer}\n` +
           `• ចម្ងាយបច្ចុប្បន្នរបស់អ្នក៖ ${geofence.distanceMeters} ម៉ែត្រ\n` +
-          `• កម្រិតអនុញ្ញាតអតិបរមា៖ ត្រឹមតែ ១០០ ម៉ែត្រប៉ុណ្ណោះ!\n\n` +
-          `📌 លក្ខខណ្ឌតឹងរ៉ឹង៖ រាល់ការស្កេនចូល ឬចេញ ត្រូវតែស្ថិតក្នុងបរិវេណសាខា (≤ 100m)។`
+          `• កម្រិតអនុញ្ញាតអតិបរមា៖ ត្រឹមតែ ${branch.radiusMeters || 100} ម៉ែត្រប៉ុណ្ណោះ!\n\n` +
+          `📌 គោលការណ៍វិន័យ V2 Education៖ វត្តមានត្រូវតែស្កេនក្នុងបរិវេណសាខាជាក់ស្តែង (≤ 100m)។ មិនអនុញ្ញាតស្កេនពីទីតាំងផ្សេងជាដាច់ខាត!`
         );
         return;
       }
@@ -301,8 +313,8 @@ export default function CheckinMeDashboardPage() {
         telegramNotified: true,
       };
 
-      // Send Telegram notification
-      const telegramMessage = formatTelegramAttendanceMessage(newRecord);
+      // Send Telegram notification (Standard CheckinMeBot 3-line format)
+      const telegramMessage = formatTelegramAttendanceMessage(newRecord, staff.subject || staff.department);
       const telegramRes = await fetch("/api/telegram", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -311,6 +323,7 @@ export default function CheckinMeDashboardPage() {
           chatId: loadedSettings.telegramChatId,
           message: telegramMessage,
           photoBase64,
+          sendAsText: true, // 🔒 Strict CheckinMeBot text format from user screenshot
         }),
       });
 

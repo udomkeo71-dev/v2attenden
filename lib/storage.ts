@@ -195,7 +195,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   telegramBotToken: "8958163929:AAF7JduKMqPYdLiFR2dmJWB0zKt_xvyYyEY",
   telegramChatId: "7770204305",
   telegramAccountingChatId: "7770204305", // Default to accountant Keo Udom's chat ID
-  gpsSimMode: "INSIDE", // Default to INSIDE for easy immediate testing on desktop
+  gpsSimMode: "REAL", // 🔒 STRICT STANDARD: ប្រើ GPS ពិតប្រាកដលើឧបករណ៍ (Real Device GPS Only)
 };
 
 // ==========================================
@@ -542,12 +542,13 @@ export function loadSettings(): AppSettings {
     const raw = localStorage.getItem(STORAGE_KEY_SETTINGS);
     if (!raw) return DEFAULT_SETTINGS;
     const parsed = JSON.parse(raw);
+    const mode = parsed.gpsSimMode === "OUTSIDE" ? "OUTSIDE" : "REAL";
     return {
       geminiApiKey: parsed.geminiApiKey || DEFAULT_SETTINGS.geminiApiKey,
       telegramBotToken: parsed.telegramBotToken || DEFAULT_SETTINGS.telegramBotToken,
       telegramChatId: parsed.telegramChatId || DEFAULT_SETTINGS.telegramChatId,
       telegramAccountingChatId: parsed.telegramAccountingChatId || DEFAULT_SETTINGS.telegramAccountingChatId,
-      gpsSimMode: parsed.gpsSimMode || DEFAULT_SETTINGS.gpsSimMode,
+      gpsSimMode: mode,
     };
   } catch {
     return DEFAULT_SETTINGS;

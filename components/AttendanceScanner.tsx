@@ -134,22 +134,15 @@ export const AttendanceScanner: React.FC<AttendanceScannerProps> = ({
     const loadedSettings = loadSettings();
     setSettings(loadedSettings);
 
-    if (loadedSettings.gpsSimMode === "INSIDE") {
-      // Simulate location 15m away from current branch
-      setUserCoords({
-        lat: currentBranch.latitude + 0.0001,
-        lng: currentBranch.longitude + 0.0001,
-      });
-      setGpsError(null);
-    } else if (loadedSettings.gpsSimMode === "OUTSIDE") {
-      // Simulate location ~350m outside branch radius
+    if (loadedSettings.gpsSimMode === "OUTSIDE") {
+      // Simulate location ~350m outside branch radius for admin testing
       setUserCoords({
         lat: currentBranch.latitude + 0.003,
         lng: currentBranch.longitude + 0.003,
       });
       setGpsError(null);
     } else {
-      // REAL DEVICE GPS
+      // REAL DEVICE GPS (Strict Standard - No Fake Simulation)
       if (typeof window !== "undefined" && "geolocation" in navigator) {
         setGpsLoading(true);
         navigator.geolocation.getCurrentPosition(
@@ -163,16 +156,19 @@ export const AttendanceScanner: React.FC<AttendanceScannerProps> = ({
           },
           (err) => {
             console.warn("GPS error:", err.message);
-            setGpsError("មិនអាចទាញយក GPS បានទេ (សូមពិនិត្យការអនុញ្ញាត Location)");
+            setGpsError("មិនអាចទាញយក GPS បានទេ! សូមបើក Location លើទូរស័ព្ទរបស់អ្នក");
             setGpsLoading(false);
-            // Fallback to branch coords
+            // ⛔ STRICT: Never fall back to branch coords!
             setUserCoords({
-              lat: currentBranch.latitude,
-              lng: currentBranch.longitude,
+              lat: 0,
+              lng: 0,
             });
           },
           { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
         );
+      } else {
+        setGpsError("ឧបករណ៍នេះមិនគាំទ្រ GPS ឡើយ");
+        setUserCoords({ lat: 0, lng: 0 });
       }
     }
   }, [currentBranch]);
@@ -416,7 +412,20 @@ export const AttendanceScanner: React.FC<AttendanceScannerProps> = ({
       setAttendanceType(overrideType);
     }
 
-    const activeBranch = targetBranch || scannedBranch || currentBranch;
+    // Strict branch resolution: staff MUST be at their assigned branch
+    const staffBranch = V2_BRANCHES[selectedStaff.branchId] || currentBranch;
+    const activeBranch = targetBranch || staffBranch;
+
+    // ⛔ STRICT GPS REQUIREMENT: Must have real device GPS coordinates
+    if (!userCoords || (userCoords.lat === 0 && userCoords.lng === 0)) {
+      soundEffects.playError();
+      alert(
+        "⛔ មិនអាចកត់ត្រាវត្តមានបានទេ — ខ្វះទីតាំង GPS!\n\n" +
+        "ប្រព័ន្ធមិនទាន់ទទួលបានទីតាំង GPS ពិតប្រាកដលើទូរស័ព្ទរបស់អ្នកឡើយ។\n" +
+        "សូមបើកមុខងារ GPS (Location) លើទូរស័ព្ទរបស់អ្នក និងចុច 'Allow' (អនុញ្ញាត) ឱ្យកម្មវិធីប្រើប្រាស់ទីតាំង។"
+      );
+      return;
+    }
 
     // =========================================================
     // ⛔ STRICT GEOFENCE ENFORCEMENT: លើសពី ១០០m មិនអាចស្កេនបានទេ
@@ -432,7 +441,7 @@ export const AttendanceScanner: React.FC<AttendanceScannerProps> = ({
       setGeofenceBlockedInfo({
         branchName: activeBranch.nameKhmer,
         distanceMeters: activeGeofence.distanceMeters,
-        radiusMeters: activeGeofence.branchRadiusMeters || 100,
+        radiusMeters: activeBranch.radiusMeters || 100,
         googleMapsUrl: activeGeofence.googleMapsUrl,
       });
       return; // ⛔ STRICTLY BLOCK SCANNING!
@@ -469,11 +478,6 @@ export const AttendanceScanner: React.FC<AttendanceScannerProps> = ({
 
       // 3. Build Attendance Record
       const now = new Date();
-      const activeGeofence = validateBranchGeofence(
-        userCoords.lat,
-        userCoords.lng,
-        activeBranch
-      );
       const activePunctuality = evaluatePunctuality(finalType, now, selectedStaff);
 
       const record: AttendanceRecord = {
@@ -506,9 +510,12 @@ export const AttendanceScanner: React.FC<AttendanceScannerProps> = ({
         telegramNotified: true,
       };
 
-      // 4. Send Telegram Group Alert
+      // 4. Send Telegram Group Alert (Standard CheckinMeBot 3-line format)
       setProcessingStatus("កំពុងបញ្ជូនដំណឹងទៅកាន់ Telegram Group...");
-      const telegramMessage = formatTelegramAttendanceMessage(record);
+      const telegramMessage = formatTelegramAttendanceMessage(
+        record,
+        selectedStaff.subject || selectedStaff.department
+      );
 
       const telegramRes = await fetch("/api/telegram", {
         method: "POST",
@@ -518,6 +525,7 @@ export const AttendanceScanner: React.FC<AttendanceScannerProps> = ({
           chatId: settings.telegramChatId,
           message: telegramMessage,
           photoBase64: photoBase64,
+          sendAsText: true, // 🔒 Strict CheckinMeBot text format from user screenshot
         }),
       });
 

@@ -11,38 +11,117 @@ export function escapeHtml(text: string = ""): string {
 }
 
 /**
- * Format attendance record into the exact required Telegram HTML caption
+ * Format standard branch name matching V2 Education CheckinMeBot standard
  */
-export function formatTelegramAttendanceMessage(record: AttendanceRecord): string {
+export function getStandardBranchReportName(branchId: string = "", branchNameKhmer?: string): string {
+  const cleanId = (branchId || "").toUpperCase();
+  if (cleanId === "OLP" || cleanId === "PSL") return "V2 Education Olympic";
+  if (cleanId === "TTP") return "V2 Education TTP";
+  if (cleanId === "TK") return "V2 Education TK 4.1";
+  if (cleanId === "BKK") return "V2 Education BKK";
+  if (cleanId === "STM") return "V2 Education Santhormok";
+  if (cleanId === "BS" || cleanId === "CA") return "V2 Education Boeung Snor";
+  if (cleanId === "SS" || cleanId === "SR") return "V2 Education Sen Sok";
+
+  if (branchNameKhmer) {
+    if (branchNameKhmer.includes("អូឡាំពិក")) return "V2 Education Olympic";
+    if (branchNameKhmer.includes("ទួលទំពូង")) return "V2 Education TTP";
+    if (branchNameKhmer.includes("ទួលគោក")) return "V2 Education TK 4.1";
+    if (branchNameKhmer.includes("បឹងកេងកង")) return "V2 Education BKK";
+    if (branchNameKhmer.includes("សន្ធរម៉ុក")) return "V2 Education Santhormok";
+    if (branchNameKhmer.includes("បឹងស្នោ") || branchNameKhmer.includes("ច្បារអំពៅ")) return "V2 Education Boeung Snor";
+    if (branchNameKhmer.includes("សែនសុខ")) return "V2 Education Sen Sok";
+  }
+  return `V2 Education ${branchId}`;
+}
+
+/**
+ * Format position: Position: Teacher Math(Mathematics) or Accountant(Finance) or Admin(HR)
+ */
+export function getStandardPositionReport(role: string = "", subjectOrDept?: string): string {
+  if (!role) return subjectOrDept || "Staff";
+  if (role.includes("(") && role.includes(")")) {
+    return role;
+  }
+  if (subjectOrDept) {
+    return `${role}(${subjectOrDept})`;
+  }
+  return role;
+}
+
+/**
+ * Format status string:
+ * - 🟢 Early 55m / 🟢 Early 1h 20m
+ * - 🔵 Good
+ * - 🔴 Late 15m / 🔴 Late 1h 10m
+ * - 🔴 Early 6h 59m
+ */
+export function getStandardStatusBadge(
+  type: "CHECK_IN" | "CHECK_OUT",
+  punctualityStatus: string = "ON_TIME",
+  diffMinutes: number = 0
+): string {
+  const formatHmM = (mins: number) => {
+    const absMins = Math.abs(mins);
+    if (absMins >= 60) {
+      const h = Math.floor(absMins / 60);
+      const m = absMins % 60;
+      return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    }
+    return `${absMins}m`;
+  };
+
+  if (type === "CHECK_IN") {
+    if (punctualityStatus === "EARLY" && diffMinutes > 0) {
+      return `🟢 Early ${formatHmM(diffMinutes)}`;
+    } else if (punctualityStatus === "LATE" && diffMinutes > 0) {
+      return `🔴 Late ${formatHmM(diffMinutes)}`;
+    } else {
+      return `🔵 Good`;
+    }
+  } else {
+    // CHECK_OUT
+    if (punctualityStatus === "EARLY_LEAVE" && diffMinutes > 0) {
+      return `🔴 Early ${formatHmM(diffMinutes)}`;
+    } else {
+      return `🔵 Good`;
+    }
+  }
+}
+
+/**
+ * EXACT OFFICIAL CHECKINME FORMAT (from user photo media_1790662177456.png):
+ *
+ * Cheng Sophanny checked in 🟢 Early 55m
+ * Position: Teacher Chemistry(Chemistry)
+ * Branch: V2 Education Olympic
+ * Reason: ... (if checkout reason provided)
+ */
+export function formatTelegramAttendanceMessage(
+  record: AttendanceRecord,
+  staffSubjectOrDept?: string,
+  reason?: string
+): string {
   const isCheckIn = record.type === "CHECK_IN";
-  const typeBadge = isCheckIn
-    ? "🟢 <b>ចូលបម្រើការងារ (CHECK-IN)</b>"
-    : "🟠 <b>ចេញពីការងារ (CHECK-OUT)</b>";
+  const actionWord = isCheckIn ? "checked in" : "checked out";
+  const statusBadge = getStandardStatusBadge(
+    record.type,
+    record.punctuality?.status || "ON_TIME",
+    record.punctuality?.diffMinutes || 0
+  );
 
-  const mapsUrl = `https://maps.google.com/?q=${record.userCoords.latitude.toFixed(6)},${record.userCoords.longitude.toFixed(6)}`;
-  const gpsPill = record.geofence.isWithinGeofence
-    ? `✅ ក្នុងបរិវេណ (${record.geofence.distanceMeters}m)`
-    : `⚠️ ក្រៅបរិវេណ (${record.geofence.distanceMeters}m)`;
+  const position = getStandardPositionReport(record.staffRole, staffSubjectOrDept);
+  const branchName = getStandardBranchReportName(record.branchId, record.branchName);
 
-  const safeBranchName = escapeHtml(record.branchName);
-  const safeBranchId = escapeHtml(record.branchId);
-  const safeStaffName = escapeHtml(record.staffName);
-  const safeStaffRole = escapeHtml(record.staffRole);
-  const safeFormattedTime = escapeHtml(record.formattedTime);
-  const safeFormattedDate = escapeHtml(record.formattedDate);
-  const safePunctualityLabel = escapeHtml(record.punctuality.labelKhmer);
+  let msg = `<b>${escapeHtml(record.staffName)}</b> ${actionWord} ${statusBadge}\n` +
+            `Position: ${escapeHtml(position)}\n` +
+            `Branch: ${escapeHtml(branchName)}`;
 
-  return `✨ <b>V2aAttendence — របាយការណ៍វត្តមានផ្លូវការ</b>
+  if (reason && reason.trim()) {
+    msg += `\nReason: ${escapeHtml(reason.trim())}`;
+  }
 
-${typeBadge}
-🏫 <b>បញ្ជាក់សាខាស្កេន៖</b> <b>${safeBranchName} (${safeBranchId})</b>
-👤 <b>បុគ្គលិក៖</b> <code>${safeStaffName}</code>
-💼 <b>តួនាទី៖</b> ${safeStaffRole}
-⏰ <b>ពេលវេលា៖</b> <code>${safeFormattedTime}</code> • ${safeFormattedDate}
-🚦 <b>ស្ថានភាពម៉ោង៖</b> <b>${safePunctualityLabel}</b>
-📍 <b>ទីតាំង GPS៖</b> ${gpsPill} (កាំកំណត់ត្រឹម ១០០ ម៉ែត្រ)
-🗺️ <b>ផែនទីជាក់ស្តែង៖</b> <a href="${mapsUrl}">📍 ចុចមើលលើ Google Maps</a>
-🛡️ <b>ប្រព័ន្ធ៖</b> ស្កេនកូដ QR សាខាផ្លូវការ V2 Education`;
+  return msg;
 }
 
 /**

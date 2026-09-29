@@ -5,13 +5,14 @@ interface TelegramRequestBody {
   chatId?: string;
   message: string;
   photoBase64?: string;
+  sendAsText?: boolean;
   isTest?: boolean;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const body: TelegramRequestBody = await req.json();
-    const { message, photoBase64, isTest = false } = body;
+    const { message, photoBase64, sendAsText = false, isTest = false } = body;
     const DEFAULT_TOKEN = "8958163929:AAF7JduKMqPYdLiFR2dmJWB0zKt_xvyYyEY";
     const DEFAULT_CHAT_ID = "7770204305";
 
@@ -65,8 +66,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // If photo is attached, send via /sendPhoto
-    if (photoBase64 && photoBase64.includes("base64,")) {
+    // If photo is attached AND not requested as pure text, send via /sendPhoto
+    if (!sendAsText && photoBase64 && photoBase64.includes("base64,")) {
       try {
         const cleanBase64 = photoBase64.split(",")[1];
         const buffer = Buffer.from(cleanBase64, "base64");

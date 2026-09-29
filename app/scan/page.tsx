@@ -128,16 +128,6 @@ function StaffScannerContent() {
   // Fetch device GPS coordinates or respect GPS simulation settings
   const refreshGpsLocation = React.useCallback(() => {
     const settings = loadSettings();
-    if (settings.gpsSimMode === "INSIDE") {
-      setUserCoords({
-        lat: currentBranch.latitude + 0.0001,
-        lng: currentBranch.longitude + 0.0001,
-      });
-      setIsUsingRealGps(false);
-      setGpsLoading(false);
-      return;
-    }
-
     if (settings.gpsSimMode === "OUTSIDE") {
       setUserCoords({
         lat: currentBranch.latitude + 0.003,
@@ -162,14 +152,18 @@ function StaffScannerContent() {
         (err) => {
           console.warn("GPS error:", err.message);
           setGpsLoading(false);
-          // Fallback to branch coords
+          setIsUsingRealGps(false);
+          // ⛔ STRICT: Never fall back to branch coords!
           setUserCoords({
-            lat: currentBranch.latitude,
-            lng: currentBranch.longitude,
+            lat: 0,
+            lng: 0,
           });
         },
         { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
       );
+    } else {
+      setUserCoords({ lat: 0, lng: 0 });
+      setIsUsingRealGps(false);
     }
   }, [currentBranch]);
 
@@ -414,16 +408,31 @@ function StaffScannerContent() {
       setAttendanceType(overrideType);
     }
 
+    // Strict branch resolution: staff MUST be at their assigned branch
+    const staffBranch = V2_BRANCHES[selectedStaff.branchId] || currentBranch;
+    const activeBranch = staffBranch;
+
+    // ⛔ STRICT GPS REQUIREMENT: Must have real device GPS coordinates
+    if (!userCoords || (userCoords.lat === 0 && userCoords.lng === 0)) {
+      soundEffects.playError();
+      alert(
+        "⛔ មិនអាចកត់ត្រាវត្តមានបានទេ — ខ្វះទីតាំង GPS!\n\n" +
+        "ប្រព័ន្ធមិនទាន់ទទួលបានទីតាំង GPS ពិតប្រាកដលើទូរស័ព្ទរបស់អ្នកឡើយ។\n" +
+        "សូមបើកមុខងារ GPS (Location) លើទូរស័ព្ទរបស់អ្នក និងចុច 'Allow' (អនុញ្ញាត) ឱ្យកម្មវិធីប្រើប្រាស់ទីតាំង។"
+      );
+      return;
+    }
+
     // =========================================================
     // ⛔ STRICT GEOFENCE ENFORCEMENT: លើសពី ១០០m មិនអាចស្កេនបានទេ
     // =========================================================
-    const currentGeofence = validateBranchGeofence(userCoords.lat, userCoords.lng, currentBranch);
-    if (!currentGeofence.isWithinGeofence || currentGeofence.distanceMeters > 100) {
+    const currentGeofence = validateBranchGeofence(userCoords.lat, userCoords.lng, activeBranch);
+    if (!currentGeofence.isWithinGeofence || currentGeofence.distanceMeters > (activeBranch.radiusMeters || 100)) {
       soundEffects.playError();
       setGeofenceBlockedInfo({
-        branchName: currentBranch.nameKhmer,
+        branchName: activeBranch.nameKhmer,
         distanceMeters: currentGeofence.distanceMeters,
-        radiusMeters: currentBranch.radiusMeters || 100,
+        radiusMeters: activeBranch.radiusMeters || 100,
         googleMapsUrl: currentGeofence.googleMapsUrl,
       });
       return; // ⛔ STRICTLY BLOCK SCANNING!
@@ -444,7 +453,7 @@ function StaffScannerContent() {
         body: JSON.stringify({
           imageBase64: photoBase64,
           staffName: selectedStaff.name,
-          branchName: currentBranch.nameKhmer,
+          branchName: activeBranch.nameKhmer,
           apiKey: settings.geminiApiKey,
         }),
       });
@@ -478,8 +487,8 @@ function StaffScannerContent() {
         staffId: selectedStaff.id,
         staffName: selectedStaff.name,
         staffRole: selectedStaff.role,
-        branchId: currentBranch.id,
-        branchName: currentBranch.nameKhmer,
+        branchId: activeBranch.id,
+        branchName: activeBranch.nameKhmer,
         userCoords: {
           latitude: userCoords.lat,
           longitude: userCoords.lng,
@@ -494,9 +503,12 @@ function StaffScannerContent() {
       // Save to LocalStorage so admin dashboard and records history show the scan
       saveAttendanceRecord(record);
 
-      // Send to Telegram Group
+      // Send to Telegram Group (Standard CheckinMeBot 3-line format)
       setProcessingStatus("កំពុងបញ្ជូនទិន្នន័យចូល Telegram...");
-      const telegramMessage = formatTelegramAttendanceMessage(record);
+      const telegramMessage = formatTelegramAttendanceMessage(
+        record,
+        selectedStaff.subject || selectedStaff.department
+      );
 
       await fetch("/api/telegram", {
         method: "POST",
@@ -506,6 +518,7 @@ function StaffScannerContent() {
           chatId: settings.telegramChatId,
           message: telegramMessage,
           photoBase64: photoBase64,
+          sendAsText: true, // 🔒 Strict CheckinMeBot text format from user screenshot
         }),
       });
 
