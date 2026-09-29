@@ -1,7 +1,6 @@
 // public/sw.js - V2aAttendence PWA Service Worker with Automatic Live Updates
-const CACHE_NAME = 'v2a-attendance-v2.5';
+const CACHE_NAME = 'v2a-attendance-v2.7';
 const PRECACHE_ASSETS = [
-  '/',
   '/manifest.json',
   '/logo.png',
   '/v2_n.png',

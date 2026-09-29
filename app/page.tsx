@@ -107,75 +107,82 @@ export default function CheckinMeDashboardPage() {
 
   // Initialize data on mount & verify credentials
   useEffect(() => {
-    const loadedStaff = loadStaffList();
-    setStaffList(loadedStaff);
+    try {
+      const loadedStaff = loadStaffList();
+      setStaffList(loadedStaff);
 
-    const loadedRecords = loadAttendanceRecords();
-    setRecords(loadedRecords);
+      const loadedRecords = loadAttendanceRecords();
+      setRecords(loadedRecords);
 
-    // Check URL parameters (e.g. ?code=8888 or ?code=V2-BKK01 or ?staff=staff-1)
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      const codeParam = params.get("code") || params.get("admin");
-      const staffParam = params.get("staff");
+      // Check URL parameters (e.g. ?code=8888 or ?code=V2-BKK01 or ?staff=staff-1)
+      if (typeof window !== "undefined") {
+        const params = new URLSearchParams(window.location.search);
+        const codeParam = params.get("code") || params.get("admin");
+        const staffParam = params.get("staff");
 
-      let resolvedSession: AuthSession | null = null;
-      const savedSession = loadAuthSession();
+        let resolvedSession: AuthSession | null = null;
+        const savedSession = loadAuthSession();
 
-      if (codeParam) {
-        // If current saved session matches this code and already has email & phone, restore it
-        if (
-          savedSession &&
-          savedSession.staffEmail &&
-          savedSession.staffPhone &&
-          (savedSession.staffCode?.toLowerCase() === codeParam.toLowerCase() ||
-            (savedSession.role === "ADMIN" &&
-              (codeParam.toUpperCase() === "ADMIN2026" ||
-                codeParam === "8888" ||
-                codeParam.toUpperCase() === "ADMIN")))
-        ) {
-          resolvedSession = savedSession;
+        if (codeParam) {
+          // If current saved session matches this code and already has email & phone, restore it
+          if (
+            savedSession &&
+            savedSession.staffEmail &&
+            savedSession.staffPhone &&
+            (savedSession.staffCode?.toLowerCase() === codeParam.toLowerCase() ||
+              (savedSession.role === "ADMIN" &&
+                (codeParam.toUpperCase() === "ADMIN2026" ||
+                  codeParam === "8888" ||
+                  codeParam.toUpperCase() === "ADMIN")))
+          ) {
+            resolvedSession = savedSession;
+          } else {
+            // Require participant to fill in Email, Phone, and App Code in the Portal
+            resolvedSession = null;
+          }
         } else {
-          // Require participant to fill in Email, Phone, and App Code in the Portal
-          resolvedSession = null;
-        }
-      } else {
-        // Restore saved session only if it contains verified contact details
-        if (savedSession && savedSession.staffEmail && savedSession.staffPhone) {
-          resolvedSession = savedSession;
-        } else {
-          resolvedSession = null;
-        }
-      }
-
-      setAuthSession(resolvedSession);
-      setIsAuthLoading(false);
-
-      const b = (params.get("branch") as BranchId | null) || (resolvedSession?.staffBranchId as BranchId | null);
-      if (b && V2_BRANCHES[b]) {
-        setCurrentBranchId(b);
-      }
-      if (params.get("mode") === "scan" || params.get("staff") === "1") {
-        setActiveTab("CLOCK");
-      }
-
-      // Automated check for 9:00 PM nightly report prompt
-      const checkNightlySchedule = () => {
-        const now = new Date();
-        const hour = now.getHours();
-        const todayDateStr = now.toLocaleDateString("en-GB");
-        if (hour >= 21) {
-          const lastSent = localStorage.getItem("v2_last_nightly_report_date");
-          if (lastSent !== todayDateStr) {
-            setIsAccountingModalOpen(true);
+          // Restore saved session only if it contains verified contact details
+          if (savedSession && savedSession.staffEmail && savedSession.staffPhone) {
+            resolvedSession = savedSession;
+          } else {
+            resolvedSession = null;
           }
         }
-      };
 
-      checkNightlySchedule();
-      const nightlyTimer = setInterval(checkNightlySchedule, 60000);
-      return () => clearInterval(nightlyTimer);
-    } else {
+        setAuthSession(resolvedSession);
+
+        const b = (params.get("branch") as BranchId | null) || (resolvedSession?.staffBranchId as BranchId | null);
+        if (b && V2_BRANCHES[b]) {
+          setCurrentBranchId(b);
+        }
+        if (params.get("mode") === "scan" || params.get("staff") === "1") {
+          setActiveTab("CLOCK");
+        }
+
+        // Automated check for 9:00 PM nightly report prompt
+        const checkNightlySchedule = () => {
+          try {
+            const now = new Date();
+            const hour = now.getHours();
+            const todayDateStr = now.toLocaleDateString("en-GB");
+            if (hour >= 21) {
+              const lastSent = localStorage.getItem("v2_last_nightly_report_date");
+              if (lastSent !== todayDateStr) {
+                setIsAccountingModalOpen(true);
+              }
+            }
+          } catch (e) {
+            console.warn("Nightly schedule check warning:", e);
+          }
+        };
+
+        checkNightlySchedule();
+        const nightlyTimer = setInterval(checkNightlySchedule, 60000);
+        return () => clearInterval(nightlyTimer);
+      }
+    } catch (err) {
+      console.error("Auth initialization error:", err);
+    } finally {
       setIsAuthLoading(false);
     }
   }, []);
@@ -408,10 +415,34 @@ export default function CheckinMeDashboardPage() {
   // Auth loading state
   if (isAuthLoading) {
     return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center text-white font-kantumruy">
-        <div className="text-center space-y-3">
-          <div className="w-10 h-10 border-3 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto" />
-          <p className="text-xs text-slate-400">កំពុងផ្ទៀងផ្ទាត់សិទ្ធិចូលប្រើប្រព័ន្ធ...</p>
+      <div
+        style={{
+          minHeight: "100vh",
+          backgroundColor: "#0f172a",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          color: "#ffffff",
+          fontFamily: "system-ui, -apple-system, sans-serif",
+        }}
+        className="min-h-screen bg-slate-900 flex items-center justify-center text-white font-kantumruy"
+      >
+        <div className="text-center space-y-4 p-6">
+          <div
+            style={{
+              width: "48px",
+              height: "48px",
+              border: "4px solid rgba(59, 130, 246, 0.2)",
+              borderTopColor: "#3b82f6",
+              borderRadius: "50%",
+              margin: "0 auto",
+            }}
+            className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto"
+          />
+          <div>
+            <h2 className="text-sm font-bold text-slate-200">V2 Attendance</h2>
+            <p className="text-xs text-slate-400 mt-1">កំពុងផ្ទៀងផ្ទាត់សិទ្ធិចូលប្រើប្រព័ន្ធ...</p>
+          </div>
         </div>
       </div>
     );
