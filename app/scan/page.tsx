@@ -7,6 +7,7 @@ import confetti from "canvas-confetti";
 import {
   AttendanceRecord,
   AttendanceType,
+  Branch,
   BranchId,
   Staff,
 } from "@/types";
@@ -16,7 +17,13 @@ import { evaluatePunctuality } from "@/lib/punctuality";
 import { soundEffects } from "@/lib/audio";
 import { formatTelegramAttendanceMessage } from "@/lib/telegram";
 import { generateAttendanceBadgeImage } from "@/lib/badge";
-import { loadStaffList, loadSettings, INITIAL_STAFF } from "@/lib/storage";
+import {
+  loadStaffList,
+  loadSettings,
+  loadBranchLocations,
+  saveAttendanceRecord,
+  INITIAL_STAFF,
+} from "@/lib/storage";
 import { PunctualityBadge } from "@/components/PunctualityBadge";
 import { InstallAppModal } from "@/components/InstallAppModal";
 import Link from "next/link";
@@ -47,8 +54,9 @@ function StaffScannerContent() {
   const searchParams = useSearchParams();
   const branchParam = searchParams.get("branch") as BranchId | null;
 
+  const [branchLocations, setBranchLocations] = useState<Record<BranchId, Branch>>(loadBranchLocations());
   const [currentBranchId, setCurrentBranchId] = useState<BranchId>(
-    branchParam && V2_BRANCHES[branchParam] ? branchParam : "BKK"
+    branchParam && (branchLocations[branchParam] || V2_BRANCHES[branchParam]) ? branchParam : "BKK"
   );
   const [attendanceType, setAttendanceType] = useState<AttendanceType>("CHECK_IN");
   const [staffList, setStaffList] = useState<Staff[]>(INITIAL_STAFF);
@@ -73,10 +81,15 @@ function StaffScannerContent() {
   const [scanMode, setScanMode] = useState<"QR" | "FACE">("QR");
   const [scannedAlert, setScannedAlert] = useState<string | null>(null);
 
+  const currentBranch =
+    (branchLocations && branchLocations[currentBranchId]) ||
+    V2_BRANCHES[currentBranchId] ||
+    V2_BRANCHES.BKK;
+
   // GPS Coordinates & Geofence
   const [userCoords, setUserCoords] = useState<{ lat: number; lng: number }>({
-    lat: V2_BRANCHES[currentBranchId].latitude,
-    lng: V2_BRANCHES[currentBranchId].longitude,
+    lat: currentBranch.latitude,
+    lng: currentBranch.longitude,
   });
   const [gpsLoading, setGpsLoading] = useState(false);
   const [isUsingRealGps, setIsUsingRealGps] = useState(false);
@@ -87,20 +100,19 @@ function StaffScannerContent() {
   const [submittedRecord, setSubmittedRecord] = useState<AttendanceRecord | null>(null);
   const [isInstallModalOpen, setIsInstallModalOpen] = useState(false);
 
-  const currentBranch = V2_BRANCHES[currentBranchId];
-
-  // Load staff on mount
+  // Load staff and branch locations on mount
   useEffect(() => {
     const list = loadStaffList();
     setStaffList(list);
+    setBranchLocations(loadBranchLocations());
   }, []);
 
   // Update branch if query param changes
   useEffect(() => {
-    if (branchParam && V2_BRANCHES[branchParam]) {
+    if (branchParam && (branchLocations[branchParam] || V2_BRANCHES[branchParam])) {
       setCurrentBranchId(branchParam);
     }
-  }, [branchParam]);
+  }, [branchParam, branchLocations]);
 
   // Filter staff by current branch
   const branchStaff = staffList.filter((s) => s.branchId === currentBranchId);
@@ -113,8 +125,29 @@ function StaffScannerContent() {
     }
   }, [currentBranchId, branchStaff, selectedStaffId]);
 
-  // Fetch device GPS coordinates
+  // Fetch device GPS coordinates or respect GPS simulation settings
   const refreshGpsLocation = React.useCallback(() => {
+    const settings = loadSettings();
+    if (settings.gpsSimMode === "INSIDE") {
+      setUserCoords({
+        lat: currentBranch.latitude + 0.0001,
+        lng: currentBranch.longitude + 0.0001,
+      });
+      setIsUsingRealGps(false);
+      setGpsLoading(false);
+      return;
+    }
+
+    if (settings.gpsSimMode === "OUTSIDE") {
+      setUserCoords({
+        lat: currentBranch.latitude + 0.003,
+        lng: currentBranch.longitude + 0.003,
+      });
+      setIsUsingRealGps(false);
+      setGpsLoading(false);
+      return;
+    }
+
     if (typeof window !== "undefined" && "geolocation" in navigator) {
       setGpsLoading(true);
       navigator.geolocation.getCurrentPosition(
@@ -204,7 +237,8 @@ function StaffScannerContent() {
       lastScannedRef.current = { text: rawText, time: now };
 
       // Check if QR matches branch
-      for (const branch of BRANCH_LIST) {
+      const branchesToCheck = Object.values(branchLocations || V2_BRANCHES);
+      for (const branch of branchesToCheck) {
         if (
           rawText.includes(`branch=${branch.id}`) ||
           rawText.includes(`branchId":"${branch.id}"`) ||
@@ -456,6 +490,9 @@ function StaffScannerContent() {
         photoBase64,
         telegramNotified: true,
       };
+
+      // Save to LocalStorage so admin dashboard and records history show the scan
+      saveAttendanceRecord(record);
 
       // Send to Telegram Group
       setProcessingStatus("កំពុងបញ្ជូនទិន្នន័យចូល Telegram...");

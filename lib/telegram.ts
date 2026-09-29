@@ -1,6 +1,16 @@
 import { AttendanceRecord, Staff } from "@/types";
 
 /**
+ * Escape HTML special characters for safe Telegram HTML parse_mode
+ */
+export function escapeHtml(text: string = ""): string {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/**
  * Format attendance record into the exact required Telegram HTML caption
  */
 export function formatTelegramAttendanceMessage(record: AttendanceRecord): string {
@@ -14,14 +24,22 @@ export function formatTelegramAttendanceMessage(record: AttendanceRecord): strin
     ? `✅ ក្នុងបរិវេណ (${record.geofence.distanceMeters}m)`
     : `⚠️ ក្រៅបរិវេណ (${record.geofence.distanceMeters}m)`;
 
+  const safeBranchName = escapeHtml(record.branchName);
+  const safeBranchId = escapeHtml(record.branchId);
+  const safeStaffName = escapeHtml(record.staffName);
+  const safeStaffRole = escapeHtml(record.staffRole);
+  const safeFormattedTime = escapeHtml(record.formattedTime);
+  const safeFormattedDate = escapeHtml(record.formattedDate);
+  const safePunctualityLabel = escapeHtml(record.punctuality.labelKhmer);
+
   return `✨ <b>V2aAttendence — របាយការណ៍វត្តមានផ្លូវការ</b>
 
 ${typeBadge}
-🏫 <b>បញ្ជាក់សាខាស្កេន៖</b> <b>${record.branchName} (${record.branchId})</b>
-👤 <b>បុគ្គលិក៖</b> <code>${record.staffName}</code>
-💼 <b>តួនាទី៖</b> ${record.staffRole}
-⏰ <b>ពេលវេលា៖</b> <code>${record.formattedTime}</code> • ${record.formattedDate}
-🚦 <b>ស្ថានភាពម៉ោង៖</b> <b>${record.punctuality.labelKhmer}</b>
+🏫 <b>បញ្ជាក់សាខាស្កេន៖</b> <b>${safeBranchName} (${safeBranchId})</b>
+👤 <b>បុគ្គលិក៖</b> <code>${safeStaffName}</code>
+💼 <b>តួនាទី៖</b> ${safeStaffRole}
+⏰ <b>ពេលវេលា៖</b> <code>${safeFormattedTime}</code> • ${safeFormattedDate}
+🚦 <b>ស្ថានភាពម៉ោង៖</b> <b>${safePunctualityLabel}</b>
 📍 <b>ទីតាំង GPS៖</b> ${gpsPill} (កាំកំណត់ត្រឹម ១០០ ម៉ែត្រ)
 🗺️ <b>ផែនទីជាក់ស្តែង៖</b> <a href="${mapsUrl}">📍 ចុចមើលលើ Google Maps</a>
 🛡️ <b>ប្រព័ន្ធ៖</b> ស្កេនកូដ QR សាខាផ្លូវការ V2 Education`;
@@ -38,13 +56,37 @@ export function formatDailyAccountingTelegramReport(params: {
 }): string {
   const { dateStr, records, staffList, branchNameFilter } = params;
 
-  // Filter records for today's date
-  const todayRecords = records.filter(
-    (r) =>
-      r.formattedDate === dateStr ||
-      new Date(r.timestamp).toLocaleDateString("en-GB") === dateStr ||
-      r.timestamp.startsWith(new Date().toISOString().split("T")[0])
-  );
+  // Filter staff by branch if filter is provided and not "ALL"
+  const isBranchFiltered = Boolean(branchNameFilter && branchNameFilter !== "ALL");
+  const filteredStaffList = isBranchFiltered
+    ? staffList.filter(
+        (s) =>
+          s.branchId.toUpperCase() === branchNameFilter!.toUpperCase() ||
+          s.branchId === branchNameFilter
+      )
+    : staffList;
+
+  // Filter records strictly matching target date and branch filter
+  const targetRecords = records.filter((r) => {
+    let matchDate = r.formattedDate === dateStr;
+    if (!matchDate) {
+      try {
+        matchDate = new Date(r.timestamp).toLocaleDateString("en-GB") === dateStr;
+      } catch {
+        matchDate = false;
+      }
+    }
+    if (!matchDate) return false;
+
+    if (isBranchFiltered) {
+      return (
+        r.branchId.toUpperCase() === branchNameFilter!.toUpperCase() ||
+        r.branchId === branchNameFilter ||
+        r.branchName.includes(branchNameFilter!)
+      );
+    }
+    return true;
+  });
 
   // Group by staffId
   const staffMap: Record<
@@ -56,39 +98,48 @@ export function formatDailyAccountingTelegramReport(params: {
     }
   > = {};
 
-  staffList.forEach((s) => {
+  filteredStaffList.forEach((s) => {
     staffMap[s.id] = { staff: s };
   });
 
-  todayRecords.forEach((r) => {
+  targetRecords.forEach((r) => {
     if (!staffMap[r.staffId]) {
-      staffMap[r.staffId] = {
-        staff: {
-          id: r.staffId,
-          name: r.staffName,
-          role: r.staffRole,
-          branchId: r.branchId,
-          category: "STAFF",
-          phone: "",
-          checkInTime: "07:30",
-          checkOutTime: "17:00",
-        },
-      };
-    }
-    if (r.type === "CHECK_IN") {
-      if (!staffMap[r.staffId].checkIn || new Date(r.timestamp) < new Date(staffMap[r.staffId].checkIn!.timestamp)) {
-        staffMap[r.staffId].checkIn = r;
+      // If staff belongs to target branch or no branch filter
+      if (
+        !isBranchFiltered ||
+        r.branchId.toUpperCase() === branchNameFilter!.toUpperCase() ||
+        r.branchId === branchNameFilter
+      ) {
+        staffMap[r.staffId] = {
+          staff: {
+            id: r.staffId,
+            name: r.staffName,
+            role: r.staffRole,
+            branchId: r.branchId,
+            category: "STAFF",
+            phone: "",
+            checkInTime: "07:30",
+            checkOutTime: "17:00",
+          },
+        };
       }
-    } else if (r.type === "CHECK_OUT") {
-      if (!staffMap[r.staffId].checkOut || new Date(r.timestamp) > new Date(staffMap[r.staffId].checkOut!.timestamp)) {
-        staffMap[r.staffId].checkOut = r;
+    }
+    if (staffMap[r.staffId]) {
+      if (r.type === "CHECK_IN") {
+        if (!staffMap[r.staffId].checkIn || new Date(r.timestamp) < new Date(staffMap[r.staffId].checkIn!.timestamp)) {
+          staffMap[r.staffId].checkIn = r;
+        }
+      } else if (r.type === "CHECK_OUT") {
+        if (!staffMap[r.staffId].checkOut || new Date(r.timestamp) > new Date(staffMap[r.staffId].checkOut!.timestamp)) {
+          staffMap[r.staffId].checkOut = r;
+        }
       }
     }
   });
 
   const staffItems = Object.values(staffMap);
   const presentItems = staffItems.filter((i) => i.checkIn || i.checkOut);
-  const totalStaff = staffList.length;
+  const totalStaff = filteredStaffList.length;
   const presentCount = presentItems.length;
   const onTimeCount = presentItems.filter(
     (i) => i.checkIn && (i.checkIn.punctuality.status === "ON_TIME" || i.checkIn.punctuality.status === "EARLY")
@@ -97,14 +148,16 @@ export function formatDailyAccountingTelegramReport(params: {
     (i) => i.checkIn && i.checkIn.punctuality.status === "LATE"
   ).length;
   const checkedOutCount = presentItems.filter((i) => i.checkOut).length;
-  const absentCount = totalStaff - presentCount;
+  const absentCount = Math.max(0, totalStaff - presentCount);
 
-  const headerBranch = branchNameFilter ? `សាខា៖ ${branchNameFilter}` : "គ្រប់សាខាទាំងអស់ (៧ សាខា)";
+  const headerBranch = isBranchFiltered
+    ? `សាខា៖ ${escapeHtml(branchNameFilter)}`
+    : "គ្រប់សាខាទាំងអស់ (៧ សាខា)";
 
   let msg = `📊 <b>របាយការណ៍វត្តមានប្រចាំថ្ងៃ (សម្រាប់គណនេយ្យ)</b>\n`;
   msg += `🏫 <b>ស្ថាប័ន៖</b> V2 Education Group\n`;
   msg += `🏢 <b>${headerBranch}</b>\n`;
-  msg += `📅 <b>កាលបរិច្ឆេទ៖</b> ${dateStr} | ⏰ <b>របាយការណ៍ម៉ោង ៩:០០ យប់</b>\n`;
+  msg += `📅 <b>កាលបរិច្ឆេទ៖</b> ${escapeHtml(dateStr)} | ⏰ <b>របាយការណ៍ម៉ោង ៩:០០ យប់</b>\n`;
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `📈 <b>សង្ខេបស្ថិតិប្រចាំថ្ងៃ៖</b>\n`;
   msg += `• ចំនួនបុគ្គលិកសរុប៖ <b>${totalStaff}</b> នាក់\n`;
@@ -116,11 +169,11 @@ export function formatDailyAccountingTelegramReport(params: {
   msg += `━━━━━━━━━━━━━━━━━━━━━\n`;
   msg += `📋 <b>បញ្ជីវត្តមានចេញ-ចូល លម្អិត៖</b>\n\n`;
 
-  // Sort: Present staff first, then by branch
+  // Sort: Present staff first, then by name
   staffItems.sort((a, b) => {
     if ((a.checkIn || a.checkOut) && !b.checkIn && !b.checkOut) return -1;
     if (!a.checkIn && !a.checkOut && (b.checkIn || b.checkOut)) return 1;
-    return a.staff.name.localeCompare(b.staff.name);
+    return a.staff.name.localeCompare(b.staff.name, "km");
   });
 
   staffItems.forEach((item, index) => {
@@ -129,13 +182,17 @@ export function formatDailyAccountingTelegramReport(params: {
     const outRec = item.checkOut;
     const hasAttended = Boolean(inRec || outRec);
 
-    msg += `<b>${index + 1}. ${s.name}</b> (${s.role || "បុគ្គលិក"}) — <i>${s.branchId}</i>\n`;
+    const safeName = escapeHtml(s.name);
+    const safeRole = escapeHtml(s.role || "បុគ្គលិក");
+    const safeBranch = escapeHtml(s.branchId);
+
+    msg += `<b>${index + 1}. ${safeName}</b> (${safeRole}) — <i>${safeBranch}</i>\n`;
 
     if (hasAttended) {
-      const inTime = inRec ? inRec.formattedTime : "❌ គ្មានស្កេនចូល";
-      const inStatus = inRec ? inRec.punctuality.labelKhmer : "";
-      const outTime = outRec ? outRec.formattedTime : "⏳ មិនទាន់ស្កេនចេញ";
-      const outStatus = outRec ? outRec.punctuality.labelKhmer : "";
+      const inTime = inRec ? escapeHtml(inRec.formattedTime) : "❌ គ្មានស្កេនចូល";
+      const inStatus = inRec ? escapeHtml(inRec.punctuality.labelKhmer) : "";
+      const outTime = outRec ? escapeHtml(outRec.formattedTime) : "⏳ មិនទាន់ស្កេនចេញ";
+      const outStatus = outRec ? escapeHtml(outRec.punctuality.labelKhmer) : "";
 
       // Calculate work duration if both present
       let durationStr = "";

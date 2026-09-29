@@ -88,3 +88,9 @@
     margin: 0 auto !important;
   }
 }
+
+/* Tailwind v4 utility compatibility */
+.focus\:outline-hidden:focus {
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}

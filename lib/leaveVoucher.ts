@@ -1,4 +1,5 @@
 import { LeaveRequest } from "@/types";
+import { escapeHtml } from "@/lib/telegram";
 
 /**
  * Format leave request into an official, comprehensive HTML caption
@@ -13,30 +14,41 @@ export function formatTelegramLeaveMessage(leave: LeaveRequest): string {
     ? "⚠️ <b>លើសកូតាច្បាប់កំណត់!</b> (កាត់ប្រាក់ខែតាមច្បាប់ការងារ)"
     : "✅ <b>ស្ថិតក្នុងកូតាច្បាប់ប្រចាំឆ្នាំ</b>";
 
-  const genderStr = leave.gender ? ` (${leave.gender})` : "";
-  const resumeStr = leave.resumeDate ? `\n🔄 <b>ត្រឡប់មកបង្រៀន/ធ្វើការវិញ៖</b> <code>${leave.resumeDate}</code>` : "";
-  const groupStr = leave.classGroupName ? `\n👥 <b>ឈ្មោះក្រុម/ថ្នាក់៖</b> ${leave.classGroupName}${leave.classShiftTime ? ` (ម៉ោង ${leave.classShiftTime})` : ""}` : "";
-  const subStr = leave.substituteStaff ? `\n🤝 <b>អ្នកទទួលបន្ទុកជំនួស៖</b> ${leave.substituteStaff}` : "";
-  const sigStr = leave.applicantSignature || leave.staffName;
+  const safeStaffName = escapeHtml(leave.staffName);
+  const safeStaffRole = escapeHtml(leave.staffRole);
+  const safeBranchName = escapeHtml(leave.branchName);
+  const safeBranchId = escapeHtml(leave.branchId);
+  const safeSubjectOrDept = escapeHtml(leave.subjectOrDept || "ទូទៅ");
+  const safeLeaveType = escapeHtml(leave.leaveType);
+  const safeReason = escapeHtml(leave.reason);
+  const safeSubstitute = leave.substituteStaff ? escapeHtml(leave.substituteStaff) : "";
+  const safeClassGroup = leave.classGroupName ? escapeHtml(leave.classGroupName) : "";
+  const safeClassShift = leave.classShiftTime ? escapeHtml(leave.classShiftTime) : "";
+  const safeSig = escapeHtml(leave.applicantSignature || leave.staffName);
+
+  const genderStr = leave.gender ? ` (${escapeHtml(leave.gender)})` : "";
+  const resumeStr = leave.resumeDate ? `\n🔄 <b>ត្រឡប់មកបង្រៀន/ធ្វើការវិញ៖</b> <code>${escapeHtml(leave.resumeDate)}</code>` : "";
+  const groupStr = safeClassGroup ? `\n👥 <b>ឈ្មោះក្រុម/ថ្នាក់៖</b> ${safeClassGroup}${safeClassShift ? ` (ម៉ោង ${safeClassShift})` : ""}` : "";
+  const subStr = safeSubstitute ? `\n🤝 <b>អ្នកទទួលបន្ទុកជំនួស៖</b> ${safeSubstitute}` : "";
   const durationStr = leave.durationUnit === "HOURS"
-    ? `<b>${leave.leaveHours} ម៉ោង</b> ${leave.fromTime && leave.toTime ? `(ម៉ោង ${leave.fromTime} ដល់ ${leave.toTime}) ` : ""}(សមមូល ${leave.totalDays} ថ្ងៃ)`
+    ? `<b>${leave.leaveHours} ម៉ោង</b> ${leave.fromTime && leave.toTime ? `(ម៉ោង ${escapeHtml(leave.fromTime)} ដល់ ${escapeHtml(leave.toTime)}) ` : ""}(សមមូល ${leave.totalDays} ថ្ងៃ)`
     : `<b>${leave.totalDays} ថ្ងៃ</b>`;
 
   return `📜 <b>ពាក្យសុំច្បាប់ផ្លូវការ (V2 Education Leave Form)</b>
-🏫 <b>ផ្ទះគ្រូបង្រៀនគំរូ V2 Education (${leave.branchName})</b>
+🏫 <b>ផ្ទះគ្រូបង្រៀនគំរូ V2 Education (${safeBranchName})</b>
 💡 <i>«ចាំ យល់ បកស្រាយបាន = ចេះប្រាកដ»</i>
 ━━━━━━━━━━━━━━━━━━━━━━━━
-👤 <b>ខ្ញុំបាទ/នាងខ្ញុំ៖</b> <code>${leave.staffName}</code>${genderStr}
-🏷️ <b>តួនាទី៖</b> ${leave.staffRole} (${catLabel})
-${deptSubjectLabel}៖ <b>${leave.subjectOrDept || "ទូទៅ"}</b>
-🏫 <b>សាខាប្រចាំការ៖</b> ${leave.branchName} (${leave.branchId})
+👤 <b>ខ្ញុំបាទ/នាងខ្ញុំ៖</b> <code>${safeStaffName}</code>${genderStr}
+🏷️ <b>តួនាទី៖</b> ${safeStaffRole} (${catLabel})
+${deptSubjectLabel}៖ <b>${safeSubjectOrDept}</b>
+🏫 <b>សាខាប្រចាំការ៖</b> ${safeBranchName} (${safeBranchId})
 ⏰ <b>វេនការងារ៖</b> <b>${leave.shiftHours} ម៉ោង/ថ្ងៃ</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━
 🎯 <b>កម្មវត្ថុ៖</b> ស្នើសុំឈប់សម្រាកចំនួន ${durationStr}
-📅 <b>ចាប់ពីថ្ងៃ៖</b> <code>${leave.startDate}</code> ដល់ <code>${leave.endDate}</code>${resumeStr}${groupStr}
-📌 <b>ប្រភេទច្បាប់៖</b> <b>${leave.leaveType}</b>
+📅 <b>ចាប់ពីថ្ងៃ៖</b> <code>${escapeHtml(leave.startDate)}</code> ដល់ <code>${escapeHtml(leave.endDate)}</code>${resumeStr}${groupStr}
+📌 <b>ប្រភេទច្បាប់៖</b> <b>${safeLeaveType}</b>
 🏷️ <b>ការប្រើប្រាស់ AL៖</b> ${leave.useAL ? "🟢 <b>ប្រើប្រាស់ AL (កាត់កូតាច្បាប់)</b>" : "⚪ <b>អត់ប្រើ AL (មិនកាត់កូតា / Unpaid)</b>"}
-📝 <b>មូលហេតុ៖</b> ${leave.reason}${subStr}
+📝 <b>មូលហេតុ៖</b> ${safeReason}${subStr}
 ━━━━━━━━━━━━━━━━━━━━━━━━
 🤖 <b>AI បូកសរុបកូតាច្បាប់ (Leave Balance)៖</b>
 • កូតាច្បាប់សរុប៖ <b>${leave.leaveQuotaTotal} ថ្ងៃ</b>
@@ -45,9 +57,9 @@ ${deptSubjectLabel}៖ <b>${leave.subjectOrDept || "ទូទៅ"}</b>
 • សមតុល្យនៅសល់៖ <b>${leave.leaveQuotaRemaining} ថ្ងៃ</b>
 • ការវិភាគ AI៖ ${aiAlert}
 ━━━━━━━━━━━━━━━━━━━━━━━━
-✍️ <b>ហត្ថលេខាសាមីខ្លួន៖</b> <i>${sigStr}</i> ${leave.signatureDataUrl ? "(បានគូសហត្ថលេខាឌីជីថល ✅)" : ""}
+✍️ <b>ហត្ថលេខាសាមីខ្លួន៖</b> <i>${safeSig}</i> ${leave.signatureDataUrl ? "(បានគូសហត្ថលេខាឌីជីថល ✅)" : ""}
 🏢 <b>ជូនចំពោះ៖</b> គណៈគ្រប់គ្រង & គណនេយ្យករ V2 Education
-⏰ <b>កាលបរិច្ឆេទស្នើ៖</b> ${leave.formattedTime} • ${leave.formattedDate}
+⏰ <b>កាលបរិច្ឆេទស្នើ៖</b> ${escapeHtml(leave.formattedTime)} • ${escapeHtml(leave.formattedDate)}
 🛡️ <b>ប្រព័ន្ធ៖</b> ផ្ទៀងផ្ទាត់ដោយ V2aAttendence`;
 }
 
@@ -98,6 +110,10 @@ export function toKhmerDigits(num: number | string): string {
   return String(num).replace(/[0-9]/g, (d) => KHMER_DIGITS[parseInt(d, 10)]);
 }
 
+export function toAsciiDigits(str: string): string {
+  return String(str).replace(/[០-៩]/g, (d) => String(KHMER_DIGITS.indexOf(d)));
+}
+
 const KHMER_MONTHS: Record<string, string> = {
   "01": "មករា", "1": "មករា",
   "02": "កុម្ភៈ", "2": "កុម្ភៈ",
@@ -128,16 +144,18 @@ export function parseKhmerDateComponents(dateStr?: string): { day: string; month
     const parts = dateStr.split("-");
     if (parts.length === 3) {
       if (parts[0].length === 4) {
+        const asciiMonth = toAsciiDigits(parts[1]).padStart(2, "0");
         return {
-          day: toKhmerDigits(parts[2]),
-          month: KHMER_MONTHS[parts[1]] || parts[1],
-          year: toKhmerDigits(parts[0]),
+          day: toKhmerDigits(toAsciiDigits(parts[2])),
+          month: KHMER_MONTHS[asciiMonth] || parts[1],
+          year: toKhmerDigits(toAsciiDigits(parts[0])),
         };
       } else {
+        const asciiMonth = toAsciiDigits(parts[1]).padStart(2, "0");
         return {
-          day: toKhmerDigits(parts[0]),
-          month: KHMER_MONTHS[parts[1]] || parts[1],
-          year: toKhmerDigits(parts[2]),
+          day: toKhmerDigits(toAsciiDigits(parts[0])),
+          month: KHMER_MONTHS[asciiMonth] || parts[1],
+          year: toKhmerDigits(toAsciiDigits(parts[2])),
         };
       }
     }
@@ -147,15 +165,43 @@ export function parseKhmerDateComponents(dateStr?: string): { day: string; month
   if (dateStr.includes("/")) {
     const parts = dateStr.split("/");
     if (parts.length === 3) {
+      const asciiMonth = toAsciiDigits(parts[1]).padStart(2, "0");
       return {
-        day: toKhmerDigits(parts[0]),
-        month: KHMER_MONTHS[parts[1]] || parts[1],
-        year: toKhmerDigits(parts[2]),
+        day: toKhmerDigits(toAsciiDigits(parts[0])),
+        month: KHMER_MONTHS[asciiMonth] || parts[1],
+        year: toKhmerDigits(toAsciiDigits(parts[2])),
       };
     }
   }
 
-  return { day: dateStr, month: "...", year: "២០២៦" };
+  return { day: toKhmerDigits(toAsciiDigits(dateStr)), month: "...", year: "២០២៦" };
+}
+
+/**
+ * Standalone safe roundRect helper supporting all browsers
+ */
+function drawRoundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number = 8
+) {
+  if (typeof ctx.roundRect === "function") {
+    ctx.roundRect(x, y, w, h, r);
+  } else {
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
 }
 
 /**
@@ -180,24 +226,6 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
   canvas.height = height;
   const ctx = canvas.getContext("2d");
   if (!ctx) return "";
-
-  // Safe roundRect polyfill for older browsers
-  if (!ctx.roundRect) {
-    (ctx as any).roundRect = function (x: number, y: number, w: number, h: number, r: number = 8) {
-      this.beginPath();
-      this.moveTo(x + r, y);
-      this.lineTo(x + w - r, y);
-      this.quadraticCurveTo(x + w, y, x + w, y + r);
-      this.lineTo(x + w, y + h - r);
-      this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-      this.lineTo(x + r, y + h);
-      this.quadraticCurveTo(x, y + h, x, y + h - r);
-      this.lineTo(x, y + r);
-      this.quadraticCurveTo(x, y, x + r, y);
-      this.closePath();
-      return this;
-    };
-  }
 
   // 1. Crisp White Official Paper Background
   ctx.fillStyle = "#ffffff";
@@ -270,7 +298,7 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
   ctx.stroke();
   ctx.textAlign = "left";
 
-  // 4. Section 1: Applicant Information (NO SALARY as requested)
+  // 4. Section 1: Applicant Information
   const textX = 65;
   ctx.font = "16px 'Kantumruy Pro', sans-serif";
   ctx.fillStyle = "#0f172a";
@@ -281,7 +309,7 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
   );
   ctx.fillText(`នៅផ្ទះគ្រូបង្រៀនគំរូ V2 Education (${leave.branchName}) ។`, textX, 296);
 
-  // 5. Salutation: Addressed to Management (Centered, matching media_1790335381650.png)
+  // 5. Salutation: Addressed to Management
   ctx.textAlign = "center";
   ctx.font = "bold 17px 'Battambang', sans-serif";
   ctx.fillStyle = "#1e3a8a";
@@ -297,7 +325,7 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
   const endComp = parseKhmerDateComponents(leave.endDate);
   const resumeComp = parseKhmerDateComponents(leave.resumeDate || leave.endDate);
 
-  // 6. Section 2: Leave Request Details (matching media_1790335381650.png)
+  // 6. Section 2: Leave Request Details
   ctx.font = "16px 'Kantumruy Pro', sans-serif";
   ctx.fillStyle = "#0f172a";
 
@@ -326,7 +354,7 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
     489
   );
 
-  // Group 2 line (matching 2nd group row in media_1790335381650.png)
+  // Group 2 line
   const group2Str = leave.classGroupName2 || (leave.classGroupName ? "" : "....................................");
   const shiftTime2 = leave.classShiftTime2 || (leave.classGroupName ? "" : "................");
   if (group2Str || !leave.classGroupName) {
@@ -351,13 +379,13 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
     ctx.fillText(`អ្នកទទួលបន្ទុកជំនួស ៖ ${leave.substituteStaff} ។`, textX, reasonY + 30);
   }
 
-  // 7. Section 3: Official AL & Quota Summary Box (Beloved rounded box from media_1790344836612.png)
+  // 7. Section 3: Official AL & Quota Summary Box
   const boxY = leave.substituteStaff ? reasonY + 68 : reasonY + 44;
   const boxH = 115;
   ctx.fillStyle = "#f8fafc";
   ctx.strokeStyle = "#cbd5e1";
   ctx.beginPath();
-  ctx.roundRect(textX, boxY, width - textX * 2, boxH, 10);
+  drawRoundRect(ctx, textX, boxY, width - textX * 2, boxH, 10);
   ctx.fill();
   ctx.stroke();
 
@@ -407,7 +435,7 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
   // 9. Signatures Block
   const sigSectionY = closeY + 65;
 
-  // Left Column: Management / Stamp (អ្នកទទួលពាក្យ និង អ្នកឯកភាព)
+  // Left Column: Management / Stamp
   const leftCenterX = 230;
   ctx.textAlign = "center";
   ctx.font = "bold 16px 'Battambang', sans-serif";
@@ -420,7 +448,6 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
 
   // Render the official stamp (v2logoRedCircleSignaturehang)
   if (stampImg && stampImg.naturalWidth > 0) {
-    // Stamp aspect ratio is approx 1375 x 855 (~1.61)
     const stampW = 210;
     const stampH = Math.round(stampW / 1.61); // ~130px
     ctx.drawImage(stampImg, leftCenterX - stampW / 2, sigSectionY + 34, stampW, stampH);
@@ -429,7 +456,7 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
     ctx.strokeStyle = "#dc2626";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.roundRect(leftCenterX - 100, sigSectionY + 36, 200, 85, 8);
+    drawRoundRect(ctx, leftCenterX - 100, sigSectionY + 36, 200, 85, 8);
     ctx.stroke();
 
     ctx.fillStyle = "#b91c1c";
@@ -451,7 +478,7 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
   ctx.fillStyle = "#0f172a";
   ctx.fillText("ហត្ថលេខាសាមីខ្លួន", rightCenterX, sigSectionY + 24);
 
-  // Render the staff's actual drawn digital signature!
+  // Render the staff's actual drawn digital signature
   if (sigImg && sigImg.naturalWidth > 0) {
     ctx.drawImage(sigImg, rightCenterX - 95, sigSectionY + 34, 190, 85);
   } else {
@@ -477,4 +504,3 @@ export async function generateLeaveVoucherBadge(leave: LeaveRequest): Promise<st
 
   return canvas.toDataURL("image/jpeg", 0.95);
 }
-

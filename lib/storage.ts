@@ -500,12 +500,30 @@ export function saveAttendanceRecord(record: AttendanceRecord): AttendanceRecord
   if (typeof window === "undefined") return [record];
   try {
     const current = loadAttendanceRecords();
-    const updated = [record, ...current];
-    localStorage.setItem(STORAGE_KEY_ATTENDANCE, JSON.stringify(updated));
+    const updated = [record, ...current].slice(0, 500);
+
+    // Optimize localStorage quota by keeping photoBase64 only for the latest 5 records
+    const storageOptimized = updated.map((r, index) => {
+      if (index >= 5 && r.photoBase64) {
+        const { photoBase64: _, ...rest } = r;
+        return rest as AttendanceRecord;
+      }
+      return r;
+    });
+
+    try {
+      localStorage.setItem(STORAGE_KEY_ATTENDANCE, JSON.stringify(storageOptimized));
+    } catch (quotaErr) {
+      console.warn("Storage quota exceeded, stripping all photos to preserve records", quotaErr);
+      // Strip all photos and retry to ensure records are NEVER lost
+      const noPhotos = storageOptimized.map(({ photoBase64: _, ...rest }) => rest as AttendanceRecord);
+      localStorage.setItem(STORAGE_KEY_ATTENDANCE, JSON.stringify(noPhotos));
+    }
+
     return updated;
   } catch (err) {
     console.error("Failed to save attendance record", err);
-    return [];
+    return [record];
   }
 }
 
@@ -564,7 +582,19 @@ export function saveLeaveRequest(request: LeaveRequest): LeaveRequest[] {
   try {
     const current = loadLeaveRequests();
     const updated = [request, ...current];
-    localStorage.setItem(STORAGE_KEY_LEAVES, JSON.stringify(updated));
+    try {
+      localStorage.setItem(STORAGE_KEY_LEAVES, JSON.stringify(updated));
+    } catch (quotaErr) {
+      console.warn("Storage quota exceeded saving leave, optimizing older entries", quotaErr);
+      const optimized = updated.map((l, index) => {
+        if (index >= 5 && l.signatureDataUrl) {
+          const { signatureDataUrl: _, ...rest } = l;
+          return rest as LeaveRequest;
+        }
+        return l;
+      });
+      localStorage.setItem(STORAGE_KEY_LEAVES, JSON.stringify(optimized));
+    }
 
     // Automatically update staff's used quota if AL was used
     if (request.useAL) {
@@ -574,7 +604,7 @@ export function saveLeaveRequest(request: LeaveRequest): LeaveRequest[] {
     return updated;
   } catch (err) {
     console.error("Failed to save leave request", err);
-    return [];
+    return [request];
   }
 }
 
@@ -582,6 +612,19 @@ export function updateLeaveRequestStatus(requestId: string, status: LeaveStatus)
   if (typeof window === "undefined") return [];
   try {
     const current = loadLeaveRequests();
+    const target = current.find((r) => r.id === requestId);
+
+    if (target && target.useAL) {
+      // If transitioning to REJECTED from non-rejected, refund quota
+      if (status === "REJECTED" && target.status !== "REJECTED") {
+        refundStaffLeaveQuota(target.staffId, target.totalDays);
+      }
+      // If transitioning back to APPROVED/PENDING from REJECTED, re-deduct quota
+      else if (status !== "REJECTED" && target.status === "REJECTED") {
+        deductStaffLeaveQuota(target.staffId, target.totalDays);
+      }
+    }
+
     const updated = current.map((r) => (r.id === requestId ? { ...r, status } : r));
     localStorage.setItem(STORAGE_KEY_LEAVES, JSON.stringify(updated));
     return updated;
@@ -597,7 +640,7 @@ export function deductStaffLeaveQuota(staffId: string, days: number): void {
     const currentStaff = loadStaffList();
     const updated = currentStaff.map((s) => {
       if (s.id === staffId) {
-        const used = (s.leaveUsed || 0) + days;
+        const used = parseFloat(((s.leaveUsed || 0) + days).toFixed(2));
         return { ...s, leaveUsed: used };
       }
       return s;
@@ -605,6 +648,23 @@ export function deductStaffLeaveQuota(staffId: string, days: number): void {
     saveStaffList(updated);
   } catch (err) {
     console.error("Failed to update staff leave quota", err);
+  }
+}
+
+export function refundStaffLeaveQuota(staffId: string, days: number): void {
+  if (typeof window === "undefined") return;
+  try {
+    const currentStaff = loadStaffList();
+    const updated = currentStaff.map((s) => {
+      if (s.id === staffId) {
+        const used = Math.max(0, parseFloat(((s.leaveUsed || 0) - days).toFixed(2)));
+        return { ...s, leaveUsed: used };
+      }
+      return s;
+    });
+    saveStaffList(updated);
+  } catch (err) {
+    console.error("Failed to refund staff leave quota", err);
   }
 }
 
@@ -628,10 +688,10 @@ export function loadBranchLocations(): Record<BranchId, Branch> {
         merged[key] = {
           ...V2_BRANCHES[key],
           ...parsed[key],
-          addressEnglish: V2_BRANCHES[key].addressEnglish,
-          contactNumber: V2_BRANCHES[key].contactNumber,
-          telegram: V2_BRANCHES[key].telegram,
-          facebookPage: V2_BRANCHES[key].facebookPage,
+          addressEnglish: parsed[key].addressEnglish !== undefined ? parsed[key].addressEnglish : V2_BRANCHES[key].addressEnglish,
+          contactNumber: parsed[key].contactNumber !== undefined ? parsed[key].contactNumber : V2_BRANCHES[key].contactNumber,
+          telegram: parsed[key].telegram !== undefined ? parsed[key].telegram : V2_BRANCHES[key].telegram,
+          facebookPage: parsed[key].facebookPage !== undefined ? parsed[key].facebookPage : V2_BRANCHES[key].facebookPage,
         };
       }
     }
