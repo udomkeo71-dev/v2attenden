@@ -21,6 +21,30 @@ export interface Branch {
 
 export type StaffCategory = 'TEACHER' | 'STAFF';
 
+// ឋានានុក្រមបុគ្គលិក: ថ្នាក់ដឹកនាំ (គ្រប់គ្រងដោយ CFO) ឬ បុគ្គលិកគ្រប់ផ្នែក (គ្រប់គ្រងដោយប្រធានគណនេយ្យ)
+export type StaffTier = 'LEADERSHIP' | 'OPERATIONS';
+
+// កាលវិភាគវេនម៉ោងធ្វើការ (Shift Time Slot)
+export interface ShiftTimeSlot {
+  checkIn: string;   // Format "HH:mm" e.g. "07:30"
+  checkOut: string;  // Format "HH:mm" e.g. "11:30"
+}
+
+// កាលវិភាគប្រចាំថ្ងៃ (អាចមាន ២ វេនក្នុងមួយថ្ងៃ)
+export interface DayShiftSchedule {
+  enabled: boolean;          // បើកធ្វើការនៅថ្ងៃនេះ
+  hasTwoShifts: boolean;     // មាន ២ វេន (2 shifts) ក្នុងមួយថ្ងៃ
+  shift1: ShiftTimeSlot;     // វេនទី ១ (ព្រឹក)
+  shift2: ShiftTimeSlot & { enabled?: boolean }; // វេនទី ២ (រសៀល/យប់)
+}
+
+// កាលវិភាគម៉ោងធ្វើការបែងចែក ចន្ទ-សុក្រ, សៅរ៍, អាទិត្យ
+export interface StaffSchedule {
+  monFri: DayShiftSchedule;  // ចន្ទ - សុក្រ (Monday - Friday)
+  sat: DayShiftSchedule;     // សៅរ៍ (Saturday)
+  sun: DayShiftSchedule;     // អាទិត្យ (Sunday)
+}
+
 // វេលាធ្វើការ: ២ម៉ោង, ៤ម៉ោង, ៦ម៉ោង, ៨ម៉ោង, ១២កន្លះម៉ោងក្នុងមួយថ្ងៃ
 export type ShiftDurationHours = 2 | 4 | 6 | 8 | 12.5;
 
@@ -46,6 +70,12 @@ export interface Staff {
   role: string;
   branchId: BranchId;
   category?: StaffCategory;        // 👨‍🏫 គ្រូបង្រៀន ឬ 🏢 បុគ្គលិកទូទៅ
+  tier?: StaffTier;                // 👑 ថ្នាក់ដឹកនាំ (គ្រប់គ្រងដោយ CFO) ឬ 👥 បុគ្គលិកគ្រប់ផ្នែក (គ្រប់គ្រងដោយប្រធានគណនេយ្យ)
+  supervisor?: string;             // អ្នកគ្រប់គ្រងផ្ទាល់: "CFO" ឬ "ប្រធានគណនេយ្យ"
+  dateOfBirth?: string;            // ថ្ងៃខែឆ្នាំកំណើត (DOB) e.g. "1994-08-15"
+  startDate?: string;              // ថ្ងៃចូលបម្រើការងារ e.g. "2022-01-10"
+  seniority?: string;              // អតីតភាពការងារ e.g. "2 ឆ្នាំ 6 ខែ"
+  schedule?: StaffSchedule;        // កាលវិភាគម៉ោងធ្វើការ (ចន្ទ-សុក្រ, សៅរ៍, អាទិត្យ ដោយមាន ២ វេន/ថ្ងៃ)
   subject?: string;                // សម្រាប់គ្រូបង្រៀន (គណិត, រូប, គីមី, ជីវៈ, etc.)
   department?: string;             // សម្រាប់បុគ្គលិក (រដ្ឋបាល, គណនេយ្យ, IT, etc.)
   baseSalary?: number;             // ប្រាក់ខែគោល (USD $)
@@ -120,6 +150,8 @@ export interface PunctualityResult {
   diffMinutes: number;
   badgeClass: string;
   detailKhmer: string;
+  shiftName?: string;
+  dayName?: string;
 }
 
 export interface GeofenceResult {

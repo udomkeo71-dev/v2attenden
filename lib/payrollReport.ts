@@ -28,6 +28,10 @@ export interface StaffWeeklyReport {
   staffRole: string;
   staffBranchId: string;
   category: "TEACHER" | "STAFF";
+  tier?: "LEADERSHIP" | "OPERATIONS";
+  supervisor?: string;
+  dateOfBirth?: string;
+  seniority?: string;
   baseSalary: number;
   shiftHours: number;
   dailyRate: number;
@@ -419,6 +423,10 @@ export function calculateStaffWeeklyReports(
       staffRole: staff.role,
       staffBranchId: staff.branchId,
       category: staff.category || "STAFF",
+      tier: staff.tier || (staff.role.includes("ប្រធាន") || staff.role.includes("CEO") ? "LEADERSHIP" : "OPERATIONS"),
+      supervisor: staff.supervisor || (staff.tier === "LEADERSHIP" ? "CFO" : "ប្រធានគណនេយ្យ"),
+      dateOfBirth: staff.dateOfBirth,
+      seniority: staff.seniority,
       baseSalary,
       shiftHours,
       dailyRate,

@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useState, useEffect, useRef } from "react";
-import { Staff, BranchId, StaffCategory, ShiftDurationHours } from "@/types";
+import { Staff, BranchId, StaffCategory, ShiftDurationHours, StaffTier, StaffSchedule, DayShiftSchedule } from "@/types";
 import { BRANCH_LIST, V2_BRANCHES } from "@/lib/branches";
 import { loadStaffList, saveStaffList, INITIAL_STAFF } from "@/lib/storage";
+import { calculateSeniorityKhmer, calculateAge, formatDateDisplay, createDefaultStaffSchedule, resolveStaffTier } from "@/lib/seniority";
 import { soundEffects } from "@/lib/audio";
 import {
   Users,
@@ -180,6 +181,16 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
   const [passcode, setPasscode] = useState("");
   const [copiedStaffId, setCopiedStaffId] = useState<string | null>(null);
 
+  // NEW: Hierarchy, Seniority, DOB, & Multi-Shift Schedule
+  const [tier, setTier] = useState<StaffTier>("OPERATIONS");
+  const [supervisor, setSupervisor] = useState("ប្រធានគណនេយ្យ");
+  const [dateOfBirth, setDateOfBirth] = useState("1995-01-01");
+  const [startDate, setStartDate] = useState("2023-01-15");
+  const [seniority, setSeniority] = useState("1 ឆ្នាំ 8 ខែ");
+  const [schedule, setSchedule] = useState<StaffSchedule>(createDefaultStaffSchedule());
+  const [activeScheduleDay, setActiveScheduleDay] = useState<"monFri" | "sat" | "sun">("monFri");
+  const [tierFilter, setTierFilter] = useState<"ALL" | "LEADERSHIP" | "OPERATIONS">("ALL");
+
   // Staff Account Pass & Personal Link Modal
   const [passModalStaff, setPassModalStaff] = useState<Staff | null>(null);
   const [passQrDataUrl, setPassQrDataUrl] = useState<string>("");
@@ -279,15 +290,24 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
     setEditingStaff(null);
     setName("");
     setAvatarUrl("");
+    setTier("OPERATIONS");
+    setSupervisor("ប្រធានគណនេយ្យ");
     setCategory("TEACHER");
     setSubject("គណិតវិទ្យា");
     setDepartment("រដ្ឋបាលសាខា");
-    setRole("គ្រូគណិតវិទ្យា");
+    setRole("គ្រូគណិតវិទ្យា (Math Teacher)");
     setBranchId("BKK");
+    setDateOfBirth("1995-01-01");
+    const todayStr = new Date().toISOString().slice(0, 10);
+    setStartDate(todayStr);
+    setSeniority("ទើបចូលថ្មី (< ១ ខែ)");
     setBaseSalary(500);
     setLeaveQuota(18);
     setLeaveUsed(0);
     setShiftHours(8);
+    const defSched = createDefaultStaffSchedule({ checkInTime: "07:30", checkOutTime: "17:00", hasTwoShifts: true });
+    setSchedule(defSched);
+    setActiveScheduleDay("monFri");
     setCheckInTime("07:30");
     setCheckOutTime("17:00");
     setPhone("");
@@ -301,12 +321,25 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
     setEditingStaff(staff);
     setName(staff.name);
     setAvatarUrl(staff.avatarUrl || "");
+    const resolved = resolveStaffTier(staff.role, staff.department, staff.tier, staff.supervisor);
+    setTier(resolved.tier);
+    setSupervisor(resolved.supervisor);
     const cat = staff.category || (staff.role.includes("គ្រូ") ? "TEACHER" : "STAFF");
     setCategory(cat);
     setSubject(staff.subject || "គណិតវិទ្យា");
     setDepartment(staff.department || "រដ្ឋបាលសាខា");
     setRole(staff.role);
     setBranchId(staff.branchId);
+    setDateOfBirth(staff.dateOfBirth || "1995-01-01");
+    setStartDate(staff.startDate || "2023-01-15");
+    setSeniority(staff.seniority || calculateSeniorityKhmer(staff.startDate || "2023-01-15"));
+    const staffSched = staff.schedule || createDefaultStaffSchedule({
+      shiftHours: staff.shiftHours,
+      checkInTime: staff.checkInTime,
+      checkOutTime: staff.checkOutTime,
+    });
+    setSchedule(staffSched);
+    setActiveScheduleDay("monFri");
     setBaseSalary(staff.baseSalary ?? 500);
     setLeaveQuota(staff.leaveQuota ?? 18);
     setLeaveUsed(staff.leaveUsed ?? 0);
@@ -338,6 +371,27 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
       setCheckInTime(conf.defaultIn);
       setCheckOutTime(conf.defaultOut);
     }
+  };
+
+  const updateScheduleDay = (
+    dayKey: "monFri" | "sat" | "sun",
+    updater: (prevDay: DayShiftSchedule) => DayShiftSchedule
+  ) => {
+    setSchedule((prev) => ({
+      ...prev,
+      [dayKey]: updater(prev[dayKey]),
+    }));
+  };
+
+  const copyMonFriToWeekend = () => {
+    setSchedule((prev) => ({
+      ...prev,
+      sat: JSON.parse(JSON.stringify(prev.monFri)),
+      sun: JSON.parse(JSON.stringify(prev.monFri)),
+    }));
+    try {
+      soundEffects?.playSuccess?.();
+    } catch {}
   };
 
   const openQuickRoleModal = (staff: Staff) => {
@@ -387,6 +441,14 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
     e.preventDefault();
     if (!name.trim() || !role.trim()) return;
 
+    // Derive primary checkInTime and checkOutTime from schedule.monFri
+    const primIn = schedule.monFri.shift1.checkIn || checkInTime;
+    const primOut =
+      schedule.monFri.hasTwoShifts && schedule.monFri.shift2.enabled
+        ? schedule.monFri.shift2.checkOut
+        : schedule.monFri.shift1.checkOut || checkOutTime;
+    const finalSeniority = seniority.trim() || calculateSeniorityKhmer(startDate);
+
     let updated: Staff[];
     if (editingStaff) {
       // Edit existing
@@ -397,15 +459,21 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
               name: name.trim(),
               role: role.trim(),
               branchId,
+              tier,
+              supervisor,
               category,
               subject: category === "TEACHER" ? subject.trim() : undefined,
               department: category === "STAFF" ? department.trim() : undefined,
+              dateOfBirth,
+              startDate,
+              seniority: finalSeniority,
+              schedule,
               baseSalary: Number(baseSalary) || 0,
               leaveQuota: Number(leaveQuota) || 18,
               leaveUsed: Number(leaveUsed) || 0,
               shiftHours,
-              checkInTime,
-              checkOutTime,
+              checkInTime: primIn,
+              checkOutTime: primOut,
               phone: phone.trim(),
               email: email.trim() || undefined,
               code: code.trim() || undefined,
@@ -422,15 +490,21 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
         name: name.trim(),
         role: role.trim(),
         branchId,
+        tier,
+        supervisor,
         category,
         subject: category === "TEACHER" ? subject.trim() : undefined,
         department: category === "STAFF" ? department.trim() : undefined,
+        dateOfBirth,
+        startDate,
+        seniority: finalSeniority,
+        schedule,
         baseSalary: Number(baseSalary) || 0,
         leaveQuota: Number(leaveQuota) || 18,
         leaveUsed: Number(leaveUsed) || 0,
         shiftHours,
-        checkInTime,
-        checkOutTime,
+        checkInTime: primIn,
+        checkOutTime: primOut,
         phone: phone.trim(),
         email: email.trim() || undefined,
         code: finalCode,
@@ -492,19 +566,29 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
       staff.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       staff.role.toLowerCase().includes(searchQuery.toLowerCase()) ||
       (staff.subject && staff.subject.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (staff.department && staff.department.toLowerCase().includes(searchQuery.toLowerCase()));
+      (staff.department && staff.department.toLowerCase().includes(searchQuery.toLowerCase())) ||
+      (staff.supervisor && staff.supervisor.toLowerCase().includes(searchQuery.toLowerCase()));
 
     const matchesBranch = branchFilter === "ALL" || staff.branchId === branchFilter;
 
     const staffCat = staff.category || (staff.role.includes("គ្រូ") ? "TEACHER" : "STAFF");
     const matchesCategory = categoryFilter === "ALL" || staffCat === categoryFilter;
 
+    const staffTier = staff.tier || (staff.role.includes("ប្រធាន") || staff.role.includes("CEO") ? "LEADERSHIP" : "OPERATIONS");
+    const matchesTier = tierFilter === "ALL" || staffTier === tierFilter;
+
     const matchesShift =
       shiftFilter === "ALL" || (staff.shiftHours !== undefined && String(staff.shiftHours) === shiftFilter);
 
-    return matchesSearch && matchesBranch && matchesCategory && matchesShift;
+    return matchesSearch && matchesBranch && matchesCategory && matchesTier && matchesShift;
   });
 
+  const leadershipCount = staffList.filter(
+    (s) => (s.tier || (s.role.includes("ប្រធាន") || s.role.includes("CEO") ? "LEADERSHIP" : "OPERATIONS")) === "LEADERSHIP"
+  ).length;
+  const operationsCount = staffList.filter(
+    (s) => (s.tier || (s.role.includes("ប្រធាន") || s.role.includes("CEO") ? "LEADERSHIP" : "OPERATIONS")) === "OPERATIONS"
+  ).length;
   const teachersCount = staffList.filter(
     (s) => (s.category || (s.role.includes("គ្រូ") ? "TEACHER" : "STAFF")) === "TEACHER"
   ).length;
@@ -619,8 +703,73 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
           {/* 3. iOS SEGMENTED CONTROL TABS & SEARCH */}
           {/* ========================================================= */}
           <div className="bg-white dark:bg-slate-900 p-3.5 rounded-3xl border border-slate-200/90 dark:border-slate-800 shadow-sm space-y-3">
-        {/* iOS Segmented Control Tabs */}
-        <div className="flex items-center justify-between gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl text-xs">
+        {/* Tier Hierarchy Separation (ថ្នាក់ដឹកនាំ vs បុគ្គលិកគ្រប់ផ្នែក) */}
+        <div className="grid grid-cols-3 gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl text-[11px] font-battambang">
+          <button
+            type="button"
+            onClick={() => setTierFilter("ALL")}
+            className={`py-2 px-1 rounded-xl font-bold transition text-center ${
+              tierFilter === "ALL"
+                ? "bg-white dark:bg-slate-700 text-blue-600 shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+            }`}
+          >
+            <span>👥 ទាំងអស់ ({staffList.length})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTierFilter("LEADERSHIP")}
+            className={`py-2 px-1 rounded-xl font-bold transition flex items-center justify-center gap-1 ${
+              tierFilter === "LEADERSHIP"
+                ? "bg-amber-500 text-white shadow-sm ring-1 ring-amber-400"
+                : "text-amber-700 dark:text-amber-400 hover:bg-amber-50/60 dark:hover:bg-amber-950/30"
+            }`}
+          >
+            <Crown className="w-3.5 h-3.5" />
+            <span>👑 ថ្នាក់ដឹកនាំ ({leadershipCount})</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setTierFilter("OPERATIONS")}
+            className={`py-2 px-1 rounded-xl font-bold transition flex items-center justify-center gap-1 ${
+              tierFilter === "OPERATIONS"
+                ? "bg-blue-600 text-white shadow-sm"
+                : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+            }`}
+          >
+            <Users className="w-3.5 h-3.5" />
+            <span>បុគ្គលិកទូទៅ ({operationsCount})</span>
+          </button>
+        </div>
+
+        {/* Manager/Supervisor Info Banner for the active Tier */}
+        {tierFilter === "LEADERSHIP" && (
+          <div className="p-2.5 rounded-2xl bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200/80 dark:border-amber-800/60 flex items-center justify-between text-[11px] text-amber-900 dark:text-amber-200">
+            <span className="flex items-center gap-1.5 font-bold">
+              <Crown className="w-3.5 h-3.5 text-amber-600" />
+              <span>ថ្នាក់ដឹកនាំ (ប្រធានសាខា, ជំនួយការ CEO, ប្រធានគណនេយ្យ)</span>
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-amber-200 dark:bg-amber-900 font-bold text-[10px]">
+              គ្រប់គ្រងដោយ CFO
+            </span>
+          </div>
+        )}
+        {tierFilter === "OPERATIONS" && (
+          <div className="p-2.5 rounded-2xl bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 flex items-center justify-between text-[11px] text-blue-900 dark:text-blue-200">
+            <span className="flex items-center gap-1.5 font-bold">
+              <Users className="w-3.5 h-3.5 text-blue-600" />
+              <span>បុគ្គលិកគ្រប់ផ្នែក (គ្រូបង្រៀន, សន្តិសុខ, អនាម័យ, រដ្ឋបាល, គណនេយ្យ...)</span>
+            </span>
+            <span className="px-2 py-0.5 rounded-full bg-blue-200 dark:bg-blue-900 font-bold text-[10px]">
+              គ្រប់គ្រងដោយប្រធានគណនេយ្យ
+            </span>
+          </div>
+        )}
+
+        {/* Category Filter Chips */}
+        <div className="flex items-center justify-between gap-1 p-1 bg-slate-100/70 dark:bg-slate-800/70 rounded-2xl text-xs">
           <button
             type="button"
             onClick={() => setCategoryFilter("ALL")}
@@ -630,7 +779,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
                 : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
             }`}
           >
-            ទាំងអស់ ({staffList.length})
+            មុខងារទាំងអស់
           </button>
           <button
             type="button"
@@ -654,7 +803,7 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
             }`}
           >
             <Briefcase className="w-3.5 h-3.5" />
-            <span>បុគ្គលិក ({staffCount})</span>
+            <span>ទូទៅ ({staffCount})</span>
           </button>
         </div>
 
@@ -945,10 +1094,31 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
 
                       {/* iOS Badge Pills */}
                       <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        {/* Tier & Supervisor Badge */}
+                        <span
+                          className={`text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center gap-1 ${
+                            staff.tier === "LEADERSHIP"
+                              ? "bg-amber-100 text-amber-900 border border-amber-300 dark:bg-amber-950/60 dark:text-amber-300"
+                              : "bg-blue-100 text-blue-900 dark:bg-blue-950/60 dark:text-blue-300"
+                          }`}
+                        >
+                          {staff.tier === "LEADERSHIP" ? (
+                            <>
+                              <Crown className="w-3 h-3 text-amber-600" />
+                              <span>ថ្នាក់ដឹកនាំ • គ្រប់គ្រងដោយ CFO</span>
+                            </>
+                          ) : (
+                            <>
+                              <Users className="w-3 h-3 text-blue-600" />
+                              <span>បុគ្គលិក • គ្រប់គ្រងដោយ {staff.supervisor || "ប្រធានគណនេយ្យ"}</span>
+                            </>
+                          )}
+                        </span>
+
                         <span
                           className={`text-[10px] font-bold px-2 py-0.5 rounded-lg flex items-center gap-1 ${
                             isTeacher
-                              ? "bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300"
+                              ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300"
                               : "bg-indigo-100 text-indigo-800 dark:bg-indigo-950/60 dark:text-indigo-300"
                           }`}
                         >
@@ -1043,15 +1213,109 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
 
                 {/* iOS Inset Grouped Info Box (Schedule & AI Quota & Phone) */}
                 <div className="bg-slate-50/80 dark:bg-slate-800/60 p-3 rounded-2xl space-y-2 text-xs border border-slate-100 dark:border-slate-800">
-                  {/* Shift Schedule */}
-                  <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-                    <span className="flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <Clock className="w-3.5 h-3.5 text-blue-500" />
-                      <span>ម៉ោងកំណត់៖</span>
-                    </span>
-                    <span className="font-mono font-bold text-xs text-slate-800 dark:text-slate-200 whitespace-nowrap bg-white dark:bg-slate-700 px-2 py-0.5 rounded-md shadow-2xs">
-                      {staff.checkInTime} - {staff.checkOutTime}
-                    </span>
+                  {/* Seniority & Date of Birth Row */}
+                  <div className="grid grid-cols-2 gap-2 pb-1.5 border-b border-slate-200/60 dark:border-slate-700/60">
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                      <CalendarDays className="w-3.5 h-3.5 text-rose-500 shrink-0" />
+                      <div className="truncate">
+                        <span className="text-slate-400 block text-[9px]">ថ្ងៃខែឆ្នាំកំណើត៖</span>
+                        <span className="font-semibold">{formatDateDisplay(staff.dateOfBirth)}</span>
+                        {(() => {
+                          const ageObj = calculateAge(staff.dateOfBirth);
+                          return ageObj ? <span className="text-[10px] text-slate-400 ml-1">({ageObj.labelKhmer})</span> : null;
+                        })()}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 text-[11px] text-slate-600 dark:text-slate-300">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                      <div className="truncate">
+                        <span className="text-slate-400 block text-[9px]">អតីតភាព (Seniority)៖</span>
+                        <span className="font-bold text-amber-600 dark:text-amber-400">
+                          {staff.seniority || calculateSeniorityKhmer(staff.startDate)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Multi-Shift Schedule (Mon-Fri, Sat, Sun) */}
+                  <div className="space-y-1 text-[11px]">
+                    <div className="flex items-center justify-between font-semibold text-slate-700 dark:text-slate-300">
+                      <span className="flex items-center gap-1 text-slate-500">
+                        <Clock className="w-3.5 h-3.5 text-blue-500" />
+                        <span>កាលវិភាគម៉ោងធ្វើការ៖</span>
+                      </span>
+                      <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-white dark:bg-slate-700 text-slate-600 dark:text-slate-300 shadow-2xs">
+                        {staff.schedule?.monFri?.hasTwoShifts ? "២ វេន/ថ្ងៃ" : "១ វេន/ថ្ងៃ"}
+                      </span>
+                    </div>
+
+                    {/* Schedule Pills for Mon-Fri, Sat, Sun */}
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-1 pt-0.5 text-[10px]">
+                      {/* Mon-Fri */}
+                      <div className="p-1.5 rounded-xl bg-white dark:bg-slate-700/60 border border-slate-200/70 dark:border-slate-700 space-y-0.5">
+                        <div className="font-bold text-blue-600 dark:text-blue-400 flex items-center justify-between">
+                          <span>ចន្ទ - សុក្រ:</span>
+                          <span className="text-[9px] text-emerald-600 font-normal">ធ្វើការ</span>
+                        </div>
+                        {staff.schedule?.monFri ? (
+                          <div className="font-mono text-slate-700 dark:text-slate-300 leading-tight">
+                            <div>វេន១: {staff.schedule.monFri.shift1.checkIn}-{staff.schedule.monFri.shift1.checkOut}</div>
+                            {staff.schedule.monFri.hasTwoShifts && staff.schedule.monFri.shift2?.enabled && (
+                              <div className="text-indigo-600 dark:text-indigo-400">
+                                វេន២: {staff.schedule.monFri.shift2.checkIn}-{staff.schedule.monFri.shift2.checkOut}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="font-mono text-slate-700 dark:text-slate-300">{staff.checkInTime} - {staff.checkOutTime}</div>
+                        )}
+                      </div>
+
+                      {/* Saturday */}
+                      <div className="p-1.5 rounded-xl bg-white dark:bg-slate-700/60 border border-slate-200/70 dark:border-slate-700 space-y-0.5">
+                        <div className="font-bold text-amber-600 dark:text-amber-400 flex items-center justify-between">
+                          <span>សៅរ៍:</span>
+                          <span className={`text-[9px] font-normal ${staff.schedule?.sat?.enabled !== false ? "text-emerald-600" : "text-slate-400"}`}>
+                            {staff.schedule?.sat?.enabled !== false ? "ធ្វើការ" : "សម្រាក"}
+                          </span>
+                        </div>
+                        {staff.schedule?.sat?.enabled !== false ? (
+                          <div className="font-mono text-slate-700 dark:text-slate-300 leading-tight">
+                            <div>វេន១: {staff.schedule?.sat?.shift1?.checkIn || staff.checkInTime}-{staff.schedule?.sat?.shift1?.checkOut || "12:00"}</div>
+                            {staff.schedule?.sat?.hasTwoShifts && staff.schedule?.sat?.shift2?.enabled && (
+                              <div className="text-indigo-600 dark:text-indigo-400">
+                                វេន២: {staff.schedule.sat.shift2.checkIn}-{staff.schedule.sat.shift2.checkOut}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-slate-400">ឈប់សម្រាក</div>
+                        )}
+                      </div>
+
+                      {/* Sunday */}
+                      <div className="p-1.5 rounded-xl bg-white dark:bg-slate-700/60 border border-slate-200/70 dark:border-slate-700 space-y-0.5">
+                        <div className="font-bold text-rose-600 dark:text-rose-400 flex items-center justify-between">
+                          <span>អាទិត្យ:</span>
+                          <span className={`text-[9px] font-normal ${staff.schedule?.sun?.enabled ? "text-emerald-600" : "text-slate-400"}`}>
+                            {staff.schedule?.sun?.enabled ? "ធ្វើការ" : "សម្រាក"}
+                          </span>
+                        </div>
+                        {staff.schedule?.sun?.enabled ? (
+                          <div className="font-mono text-slate-700 dark:text-slate-300 leading-tight">
+                            <div>វេន១: {staff.schedule.sun.shift1.checkIn}-{staff.schedule.sun.shift1.checkOut}</div>
+                            {staff.schedule.sun.hasTwoShifts && staff.schedule.sun.shift2?.enabled && (
+                              <div className="text-indigo-600 dark:text-indigo-400">
+                                វេន២: {staff.schedule.sun.shift2.checkIn}-{staff.schedule.sun.shift2.checkOut}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <div className="text-slate-400">ឈប់សម្រាក</div>
+                        )}
+                      </div>
+                    </div>
                   </div>
 
                   {/* AI Leave Quota Balance & Progress Bar */}
@@ -1199,10 +1463,24 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
                         </span>
                       )}
                     </div>
-                    <div className="text-[11px] text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
-                      <span>{staff.role}</span>
+                    <div className="text-[11px] text-slate-500 truncate flex items-center gap-1.5 mt-0.5 flex-wrap">
+                      <span className={staff.tier === "LEADERSHIP" ? "font-bold text-amber-700 dark:text-amber-400" : ""}>{staff.role}</span>
                       <span>•</span>
-                      <span style={{ color: branch?.color }}>{branch?.nameKhmer}</span>
+                      <span style={{ color: branch?.color }} className="font-semibold">{branch?.nameKhmer}</span>
+                      {staff.tier === "LEADERSHIP" ? (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-amber-100 text-amber-900 border border-amber-300 font-bold">
+                          👑 ថ្នាក់ដឹកនាំ (CFO)
+                        </span>
+                      ) : (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-blue-50 dark:bg-blue-950 text-blue-700 dark:text-blue-300 font-medium">
+                          👥 គណនេយ្យ
+                        </span>
+                      )}
+                      {staff.seniority && (
+                        <span className="text-[9px] px-1.5 py-0.2 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-mono">
+                          🎖️ {staff.seniority}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1352,62 +1630,209 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
 
             {/* Modal Form */}
             <form onSubmit={handleSaveStaff} className="p-6 space-y-5 overflow-y-auto flex-1">
-              {/* SECTION 1: CATEGORY & BRANCH */}
+              {/* SECTION 1: HIERARCHY TIER & DIRECT SUPERVISOR */}
               <div className="space-y-3">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
-                  <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">១</span>
-                  <span>ប្រភេទបុគ្គលិក & សាខាប្រចាំការ</span>
+                <div className="flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
+                  <div className="flex items-center gap-2">
+                    <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">១</span>
+                    <span>ឋានានុក្រមបុគ្គលិក & អ្នកគ្រប់គ្រងផ្ទាល់</span>
+                  </div>
+                  <span className="text-[11px] font-bold text-amber-600 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-full">
+                    {tier === "LEADERSHIP" ? "👑 គ្រប់គ្រងដោយ CFO" : "👥 គ្រប់គ្រងដោយ ប្រធានគណនេយ្យ"}
+                  </span>
                 </div>
 
-                {/* Category Toggle Cards */}
-                <div className="grid grid-cols-2 gap-2.5">
+                {/* Tier Selector Cards */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  {/* Leadership Card */}
                   <button
                     type="button"
                     onClick={() => {
-                      setCategory("TEACHER");
-                      setRole(`គ្រូ${subject}`);
+                      setTier("LEADERSHIP");
+                      setSupervisor("CFO");
+                      setCategory("STAFF");
+                      if (!role || role.includes("គ្រូ")) setRole("ប្រធានសាខា (Branch Manager)");
                     }}
-                    className={`p-3.5 rounded-2xl border text-left transition flex items-center gap-3 ${
-                      category === "TEACHER"
+                    className={`p-3.5 rounded-2xl border text-left transition flex items-start gap-3 ${
+                      tier === "LEADERSHIP"
+                        ? "bg-amber-500/10 border-amber-500 text-amber-950 dark:text-amber-200 ring-2 ring-amber-500/20 shadow-xs"
+                        : "border-slate-200 hover:bg-slate-50 text-slate-600 dark:border-slate-700 dark:text-slate-400"
+                    }`}
+                  >
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${tier === "LEADERSHIP" ? "bg-amber-500 text-white shadow-sm" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
+                      <Crown className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-xs font-battambang">👑 ថ្នាក់ដឹកនាំ (Leadership)</div>
+                        {tier === "LEADERSHIP" && <Check className="w-4 h-4 text-amber-600" />}
+                      </div>
+                      <div className="text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
+                        • គ្រប់គ្រងដោយ CFO
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        ប្រធានសាខា, ជំនួយការ CEO, ប្រធានគណនេយ្យ...
+                      </div>
+                    </div>
+                  </button>
+
+                  {/* Operations Card */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTier("OPERATIONS");
+                      setSupervisor("ប្រធានគណនេយ្យ");
+                    }}
+                    className={`p-3.5 rounded-2xl border text-left transition flex items-start gap-3 ${
+                      tier === "OPERATIONS"
                         ? "bg-blue-50 border-blue-600 text-blue-900 dark:bg-blue-950/60 dark:text-blue-200 ring-2 ring-blue-500/20 shadow-xs"
                         : "border-slate-200 hover:bg-slate-50 text-slate-600 dark:border-slate-700 dark:text-slate-400"
                     }`}
                   >
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${category === "TEACHER" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
-                      <GraduationCap className="w-5 h-5" />
+                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${tier === "OPERATIONS" ? "bg-blue-600 text-white shadow-sm" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
+                      <Users className="w-5 h-5" />
                     </div>
-                    <div>
-                      <div className="font-bold text-xs font-battambang">👨‍🏫 គ្រូបង្រៀន (Teacher)</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">បែងចែកតាមមុខវិជ្ជា</div>
-                    </div>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setCategory("STAFF");
-                      setRole(department);
-                    }}
-                    className={`p-3.5 rounded-2xl border text-left transition flex items-center gap-3 ${
-                      category === "STAFF"
-                        ? "bg-indigo-50 border-indigo-600 text-indigo-900 dark:bg-indigo-950/60 dark:text-indigo-200 ring-2 ring-indigo-500/20 shadow-xs"
-                        : "border-slate-200 hover:bg-slate-50 text-slate-600 dark:border-slate-700 dark:text-slate-400"
-                    }`}
-                  >
-                    <div className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${category === "STAFF" ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-400 dark:bg-slate-800"}`}>
-                      <Briefcase className="w-5 h-5" />
-                    </div>
-                    <div>
-                      <div className="font-bold text-xs font-battambang">🏢 បុគ្គលិកទូទៅ (Staff)</div>
-                      <div className="text-[10px] text-slate-400 mt-0.5">បែងចែកតាមផ្នែក</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center justify-between">
+                        <div className="font-bold text-xs font-battambang">👥 បុគ្គលិកគ្រប់ផ្នែក (Operations)</div>
+                        {tier === "OPERATIONS" && <Check className="w-4 h-4 text-blue-600" />}
+                      </div>
+                      <div className="text-[10px] text-blue-700 dark:text-blue-400 font-bold mt-0.5">
+                        • គ្រប់គ្រងដោយ ប្រធានគណនេយ្យ
+                      </div>
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        គ្រូបង្រៀន, សន្តិសុខ, អនាម័យ, រដ្ឋបាល, គណនេយ្យ...
+                      </div>
                     </div>
                   </button>
                 </div>
 
-                {/* 1-Tap Branch Selector (NO SELECT DROPDOWN) */}
+                {/* Quick Position Presets based on selected Tier */}
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 space-y-2">
+                  <div className="flex items-center justify-between text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+                    <span>ជ្រើសរើសតួនាទីគំរូរហ័ស (១-Tap)៖</span>
+                    <span className="font-mono text-[10px] text-slate-400">អ្នកគ្រប់គ្រង៖ {supervisor}</span>
+                  </div>
+
+                  {tier === "LEADERSHIP" ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { roleName: "ប្រធានសាខា (Branch Manager)", dept: "គ្រប់គ្រងទូទៅ" },
+                        { roleName: "ជំនួយការ CEO (CEO Assistant)", dept: "ការិយាល័យ CEO" },
+                        { roleName: "ប្រធានគណនេយ្យ (Chief Accountant)", dept: "គណនេយ្យ & ហិរញ្ញវត្ថុ" },
+                        { roleName: "នាយកប្រតិបត្តិ (Executive Director)", dept: "ថ្នាក់ដឹកនាំ" },
+                      ].map((item) => (
+                        <button
+                          key={item.roleName}
+                          type="button"
+                          onClick={() => {
+                            setRole(item.roleName);
+                            setDepartment(item.dept);
+                            setCategory("STAFF");
+                          }}
+                          className={`text-[11px] px-2.5 py-1 rounded-xl border transition font-medium ${
+                            role === item.roleName
+                              ? "bg-amber-500 text-white border-amber-500 font-bold shadow-2xs"
+                              : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-amber-50"
+                          }`}
+                        >
+                          {item.roleName}
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {/* Category toggle: Teacher vs Staff */}
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCategory("TEACHER");
+                            setRole(`គ្រូ${subject}`);
+                          }}
+                          className={`px-3 py-1 rounded-xl text-[11px] font-bold transition flex items-center gap-1 ${
+                            category === "TEACHER"
+                              ? "bg-blue-600 text-white shadow-2xs"
+                              : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700"
+                          }`}
+                        >
+                          <GraduationCap className="w-3.5 h-3.5" />
+                          <span>គ្រូបង្រៀន</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCategory("STAFF");
+                            setRole(department);
+                          }}
+                          className={`px-3 py-1 rounded-xl text-[11px] font-bold transition flex items-center gap-1 ${
+                            category === "STAFF"
+                              ? "bg-indigo-600 text-white shadow-2xs"
+                              : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700"
+                          }`}
+                        >
+                          <Briefcase className="w-3.5 h-3.5" />
+                          <span>បុគ្គលិកទូទៅ</span>
+                        </button>
+                      </div>
+
+                      {/* Roles */}
+                      {category === "TEACHER" ? (
+                        <div className="flex flex-wrap gap-1.5">
+                          {TEACHER_SUBJECTS.map((sub) => (
+                            <button
+                              key={sub}
+                              type="button"
+                              onClick={() => {
+                                setSubject(sub);
+                                setRole(`គ្រូ${sub}`);
+                              }}
+                              className={`text-[11px] px-2.5 py-1 rounded-xl border transition font-medium ${
+                                subject === sub
+                                  ? "bg-blue-600 text-white border-blue-600 font-bold shadow-2xs"
+                                  : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              គ្រូ{sub}
+                            </button>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {[
+                            { r: "សន្តិសុខ & សណ្តាប់ធ្នាប់ (Security)", d: "សន្តិសុខ" },
+                            { r: "អនាម័យ & សេវាកម្ម (Cleaner)", d: "អនាម័យ" },
+                            { r: "រដ្ឋបាលសាខា (Branch Admin)", d: "រដ្ឋបាលសាខា" },
+                            { r: "គណនេយ្យករ/បេឡា (Accountant/Cashier)", d: "គណនេយ្យ" },
+                            { r: "ទទួលភ្ញៀវ (Receptionist)", d: "សេវាអតិថិជន" },
+                            { r: "IT Support & បច្ចេកវិទ្យា", d: "IT Support" },
+                          ].map((item) => (
+                            <button
+                              key={item.r}
+                              type="button"
+                              onClick={() => {
+                                setRole(item.r);
+                                setDepartment(item.d);
+                              }}
+                              className={`text-[11px] px-2.5 py-1 rounded-xl border transition font-medium ${
+                                role === item.r
+                                  ? "bg-indigo-600 text-white border-indigo-600 font-bold shadow-2xs"
+                                  : "bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
+                              }`}
+                            >
+                              {item.r.split(" ")[0]}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* 1-Tap Branch Selector */}
                 <div className="pt-1">
                   <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5 flex items-center justify-between">
-                    <span>ជ្រើសរើសសាខា (ចុច ១-Tap ជ្រើសរើស):</span>
+                    <span>ជ្រើសរើសសាខាប្រចាំការ (ចុច ១-Tap ជ្រើសរើស):</span>
                     <span className="text-blue-600 font-bold">{V2_BRANCHES[branchId]?.nameKhmer}</span>
                   </div>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
@@ -1438,88 +1863,12 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
                 </div>
               </div>
 
-              {/* SECTION 2: SUBJECT / DEPARTMENT (DIRECT INPUT + CHIPS - NO SELECT) */}
-              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
-                  <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">២</span>
-                  <span>{category === "TEACHER" ? "មុខវិជ្ជាបង្រៀន" : "ផ្នែក / ដេប៉ាតឺម៉ង់"}</span>
-                </div>
-
-                {category === "TEACHER" ? (
-                  <div>
-                    <input
-                      type="text"
-                      required
-                      value={subject}
-                      onChange={(e) => {
-                        setSubject(e.target.value);
-                        if (!editingStaff) setRole(`គ្រូ${e.target.value}`);
-                      }}
-                      placeholder="វាយបញ្ចូលមុខវិជ្ជា ឧ. គណិតវិទ្យា, រូបវិទ្យា..."
-                      className="w-full text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-                    />
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {TEACHER_SUBJECTS.map((sub) => (
-                        <button
-                          key={sub}
-                          type="button"
-                          onClick={() => {
-                            setSubject(sub);
-                            if (!editingStaff) setRole(`គ្រូ${sub}`);
-                          }}
-                          className={`text-[11px] px-2.5 py-1 rounded-xl border transition font-medium ${
-                            subject === sub
-                              ? "bg-blue-600 text-white border-blue-600 font-bold shadow-2xs"
-                              : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
-                          }`}
-                        >
-                          {sub}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                ) : (
-                  <div>
-                    <input
-                      type="text"
-                      required
-                      value={department}
-                      onChange={(e) => {
-                        setDepartment(e.target.value);
-                        if (!editingStaff) setRole(e.target.value);
-                      }}
-                      placeholder="វាយបញ្ចូលផ្នែក ឧ. រដ្ឋបាលសាខា, គណនេយ្យ & ហិរញ្ញវត្ថុ, IT..."
-                      className="w-full text-xs font-semibold px-3.5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
-                    />
-                    <div className="flex flex-wrap gap-1.5 mt-2">
-                      {STAFF_DEPARTMENTS.map((dept) => (
-                        <button
-                          key={dept}
-                          type="button"
-                          onClick={() => {
-                            setDepartment(dept);
-                            if (!editingStaff) setRole(dept);
-                          }}
-                          className={`text-[11px] px-2.5 py-1 rounded-xl border transition font-medium ${
-                            department === dept
-                              ? "bg-indigo-600 text-white border-indigo-600 font-bold shadow-2xs"
-                              : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
-                          }`}
-                        >
-                          {dept}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* SECTION 3: STAFF PHOTO & PERSONAL INFO */}
+              {/* SECTION 2: STAFF PHOTO & PERSONAL INFO, DOB, SENIORITY */}
               <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
-                    <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">៣</span>
-                    <span>រូបថត & ព័ត៌មានផ្ទាល់ខ្លួន</span>
+                    <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">២</span>
+                    <span>រូបថត, ព័ត៌មានផ្ទាល់ខ្លួន, ថ្ងៃកំណើត & អតីតភាព</span>
                   </div>
                   {avatarUrl && (
                     <button
@@ -1647,6 +1996,103 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
                   </div>
                 </div>
 
+                {/* Date of Birth & Seniority Section */}
+                <div className="p-3.5 bg-gradient-to-r from-amber-50/70 to-blue-50/70 dark:from-amber-950/20 dark:to-blue-950/20 rounded-2xl border border-amber-200/70 dark:border-amber-900/30 space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    {/* ថ្ងៃខែឆ្នាំកំណើត (DOB) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                          🎂 ថ្ងៃខែឆ្នាំកំណើត (DOB) <span className="text-rose-500">*</span>
+                        </label>
+                        {dateOfBirth && calculateAge(dateOfBirth) && (
+                          <span className="text-[10px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950 px-1.5 py-0.5 rounded-md">
+                            {calculateAge(dateOfBirth)?.labelKhmer}
+                          </span>
+                        )}
+                      </div>
+                      <input
+                        type="date"
+                        required
+                        value={dateOfBirth}
+                        onChange={(e) => setDateOfBirth(e.target.value)}
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
+                      />
+                    </div>
+
+                    {/* ថ្ងៃចូលបម្រើការងារ (Start Date) */}
+                    <div>
+                      <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        📅 ថ្ងៃចូលបម្រើការងារ
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={startDate}
+                        onChange={(e) => {
+                          const newStart = e.target.value;
+                          setStartDate(newStart);
+                          setSeniority(calculateSeniorityKhmer(newStart));
+                        }}
+                        className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
+                      />
+                    </div>
+
+                    {/* អតីតភាពការងារ (Seniority) */}
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                          🎖️ អតីតភាព (Seniority)
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setSeniority(calculateSeniorityKhmer(startDate))}
+                          className="text-[10px] text-blue-600 hover:text-blue-700 font-bold underline"
+                          title="គណនាឡើងវិញស្វ័យប្រវត្តិតាមថ្ងៃចូលការងារ"
+                        >
+                          គណនាឡើងវិញ
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        required
+                        value={seniority}
+                        onChange={(e) => setSeniority(e.target.value)}
+                        placeholder="ឧ. 2 ឆ្នាំ 5 ខែ"
+                        className="w-full text-xs px-3 py-2 font-bold rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Seniority Quick Presets */}
+                  <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[10px]">
+                    <span className="text-slate-400 font-semibold">ជ្រើសរហ័ស៖</span>
+                    {[
+                      "ទើបចូលថ្មី (< ១ ខែ)",
+                      "៣ ខែ",
+                      "៦ ខែ",
+                      "១ ឆ្នាំ",
+                      "២ ឆ្នាំ",
+                      "៣ ឆ្នាំ",
+                      "៤ ឆ្នាំ",
+                      "៥ ឆ្នាំ+",
+                    ].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setSeniority(preset)}
+                        className={`px-2 py-0.5 rounded-lg border transition ${
+                          seniority === preset
+                            ? "bg-amber-600 text-white border-amber-600 font-bold"
+                            : "bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-amber-50"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
                     <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block mb-1">
@@ -1674,6 +2120,310 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* SECTION 3: MULTI-SHIFT DAILY SCHEDULE (ចន្ទ-សុក្រ, សៅរ៍, អាទិត្យ ជាមួយ ២ វេន/ថ្ងៃ) */}
+              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
+                    <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">៣</span>
+                    <span>កាលវិភាគម៉ោងធ្វើការ (ចន្ទ-សុក្រ, សៅរ៍, អាទិត្យ & ២ វេន/ថ្ងៃ)</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={copyMonFriToWeekend}
+                    className="text-[11px] text-blue-600 hover:text-blue-700 font-bold flex items-center gap-1 hover:underline"
+                    title="ចម្លងម៉ោង ចន្ទ-សុក្រ ទៅ សៅរ៍ និង អាទិត្យ"
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>ចម្លងចន្ទ-សុក្រ ទៅចុងសប្តាហ៍</span>
+                  </button>
+                </div>
+
+                {/* 3-Day Tabs */}
+                <div className="grid grid-cols-3 p-1 bg-slate-100 dark:bg-slate-800 rounded-2xl text-xs">
+                  {[
+                    { key: "monFri" as const, label: "ចន្ទ - សុក្រ", icon: "🗓️" },
+                    { key: "sat" as const, label: "សៅរ៍", icon: "📅" },
+                    { key: "sun" as const, label: "អាទិត្យ", icon: "☀️" },
+                  ].map((tab) => {
+                    const isDayActive = schedule[tab.key]?.enabled;
+                    const isCurrentTab = activeScheduleDay === tab.key;
+                    return (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        onClick={() => setActiveScheduleDay(tab.key)}
+                        className={`py-2 px-2 rounded-xl font-bold font-battambang transition flex items-center justify-center gap-1.5 text-center ${
+                          isCurrentTab
+                            ? "bg-white dark:bg-slate-700 text-blue-600 shadow-sm"
+                            : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+                        }`}
+                      >
+                        <span>{tab.icon}</span>
+                        <span className="truncate">{tab.label}</span>
+                        {!isDayActive && (
+                          <span className="text-[9px] px-1 py-0.2 rounded-full bg-slate-200 dark:bg-slate-600 text-slate-500 font-normal">
+                            ឈប់
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {/* Active Day Schedule Content */}
+                {(() => {
+                  const curDay = schedule[activeScheduleDay] || {
+                    enabled: true,
+                    hasTwoShifts: true,
+                    shift1: { checkIn: "07:30", checkOut: "11:30" },
+                    shift2: { enabled: true, checkIn: "13:00", checkOut: "17:00" },
+                  };
+
+                  return (
+                    <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-200/80 dark:border-slate-700/60 space-y-4">
+                      {/* Toggle Day Enabled & Toggle 2 Shifts */}
+                      <div className="flex items-center justify-between flex-wrap gap-2 pb-3 border-b border-slate-200/60 dark:border-slate-700/60">
+                        <label className="flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={curDay.enabled}
+                            onChange={(e) => {
+                              updateScheduleDay(activeScheduleDay, (prev) => ({
+                                ...prev,
+                                enabled: e.target.checked,
+                              }));
+                            }}
+                            className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500"
+                          />
+                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
+                            បើកដំណើរការធ្វើការនៅថ្ងៃ {activeScheduleDay === "monFri" ? "ចន្ទ - សុក្រ" : activeScheduleDay === "sat" ? "សៅរ៍" : "អាទិត្យ"}
+                          </span>
+                        </label>
+
+                        {curDay.enabled && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              updateScheduleDay(activeScheduleDay, (prev) => ({
+                                ...prev,
+                                hasTwoShifts: !prev.hasTwoShifts,
+                                shift2: {
+                                  ...prev.shift2,
+                                  enabled: !prev.hasTwoShifts,
+                                },
+                              }));
+                            }}
+                            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1.5 ${
+                              curDay.hasTwoShifts
+                                ? "bg-blue-600 text-white shadow-xs"
+                                : "bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-300"
+                            }`}
+                          >
+                            <Clock className="w-3.5 h-3.5" />
+                            <span>{curDay.hasTwoShifts ? "✓ បែងចែក ២ វេន (2 Shifts)" : "+ បើក ២ វេន (2 Shifts)"}</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {curDay.enabled ? (
+                        <div className="space-y-3">
+                          {/* Shift 1 Card */}
+                          <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-xs font-bold text-blue-600 dark:text-blue-400 font-battambang flex items-center gap-1.5">
+                                <span>☀️ វេនទី ១ (Shift 1 - ព្រឹក)</span>
+                              </span>
+                              <span className="text-[10px] text-slate-400 font-mono">
+                                {curDay.shift1.checkIn} - {curDay.shift1.checkOut}
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                                  ម៉ោងចូល (Shift 1 In)
+                                </label>
+                                <input
+                                  type="time"
+                                  required
+                                  value={curDay.shift1.checkIn}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    updateScheduleDay(activeScheduleDay, (prev) => ({
+                                      ...prev,
+                                      shift1: { ...prev.shift1, checkIn: val },
+                                    }));
+                                    if (activeScheduleDay === "monFri") setCheckInTime(val);
+                                  }}
+                                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white font-mono font-bold focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                              <div>
+                                <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                                  ម៉ោងចេញ (Shift 1 Out)
+                                </label>
+                                <input
+                                  type="time"
+                                  required
+                                  value={curDay.shift1.checkOut}
+                                  onChange={(e) => {
+                                    const val = e.target.value;
+                                    updateScheduleDay(activeScheduleDay, (prev) => ({
+                                      ...prev,
+                                      shift1: { ...prev.shift1, checkOut: val },
+                                    }));
+                                    if (activeScheduleDay === "monFri" && !curDay.hasTwoShifts) {
+                                      setCheckOutTime(val);
+                                    }
+                                  }}
+                                  className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white font-mono font-bold focus:ring-2 focus:ring-blue-500"
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Shift 2 Card (if hasTwoShifts is true) */}
+                          {curDay.hasTwoShifts ? (
+                            <div className="p-3 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2 animate-in fade-in duration-150">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-battambang flex items-center gap-1.5">
+                                  <span>⛅ វេនទី ២ (Shift 2 - រសៀល/យប់)</span>
+                                </span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {curDay.shift2.checkIn} - {curDay.shift2.checkOut}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                                    ម៉ោងចូល (Shift 2 In)
+                                  </label>
+                                  <input
+                                    type="time"
+                                    required
+                                    value={curDay.shift2.checkIn}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      updateScheduleDay(activeScheduleDay, (prev) => ({
+                                        ...prev,
+                                        shift2: { ...prev.shift2, checkIn: val, enabled: true },
+                                      }));
+                                    }}
+                                    className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white font-mono font-bold focus:ring-2 focus:ring-indigo-500"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
+                                    ម៉ោងចេញ (Shift 2 Out)
+                                  </label>
+                                  <input
+                                    type="time"
+                                    required
+                                    value={curDay.shift2.checkOut}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      updateScheduleDay(activeScheduleDay, (prev) => ({
+                                        ...prev,
+                                        shift2: { ...prev.shift2, checkOut: val, enabled: true },
+                                      }));
+                                      if (activeScheduleDay === "monFri") setCheckOutTime(val);
+                                    }}
+                                    className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white font-mono font-bold focus:ring-2 focus:ring-indigo-500"
+                                  />
+                                </div>
+                              </div>
+                            </div>
+                          ) : null}
+
+                          {/* Quick Presets for the Day */}
+                          <div className="flex items-center gap-1.5 flex-wrap pt-1 text-[10px]">
+                            <span className="text-slate-400 font-semibold">ម៉ោងគំរូ៖</span>
+                            {[
+                              {
+                                label: "២ វេន (07:30-11:30 | 13:00-17:00)",
+                                two: true,
+                                s1In: "07:30",
+                                s1Out: "11:30",
+                                s2In: "13:00",
+                                s2Out: "17:00",
+                              },
+                              {
+                                label: "២ វេន (08:00-12:00 | 13:30-17:30)",
+                                two: true,
+                                s1In: "08:00",
+                                s1Out: "12:00",
+                                s2In: "13:30",
+                                s2Out: "17:30",
+                              },
+                              {
+                                label: "១ វេន ព្រឹក (07:30-11:30)",
+                                two: false,
+                                s1In: "07:30",
+                                s1Out: "11:30",
+                                s2In: "13:00",
+                                s2Out: "17:00",
+                              },
+                              {
+                                label: "១ វេន ៨h (07:30-17:00)",
+                                two: false,
+                                s1In: "07:30",
+                                s1Out: "17:00",
+                                s2In: "13:00",
+                                s2Out: "17:00",
+                              },
+                              {
+                                label: "១ វេន ១២.៥h (07:00-19:30)",
+                                two: false,
+                                s1In: "07:00",
+                                s1Out: "19:30",
+                                s2In: "13:00",
+                                s2Out: "17:00",
+                              },
+                            ].map((p, idx) => (
+                              <button
+                                key={idx}
+                                type="button"
+                                onClick={() => {
+                                  updateScheduleDay(activeScheduleDay, (prev) => ({
+                                    ...prev,
+                                    enabled: true,
+                                    hasTwoShifts: p.two,
+                                    shift1: { checkIn: p.s1In, checkOut: p.s1Out },
+                                    shift2: { enabled: p.two, checkIn: p.s2In, checkOut: p.s2Out },
+                                  }));
+                                  if (activeScheduleDay === "monFri") {
+                                    setCheckInTime(p.s1In);
+                                    setCheckOutTime(p.two ? p.s2Out : p.s1Out);
+                                  }
+                                }}
+                                className="px-2 py-1 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-blue-50 text-slate-700 dark:text-slate-300 font-medium transition"
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="py-6 text-center text-slate-400 text-xs">
+                          <span className="font-semibold block">🏖️ ថ្ងៃសម្រាក (Off Day) មិនមានកាលវិភាគម៉ោងធ្វើការឡើយ</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              updateScheduleDay(activeScheduleDay, (prev) => ({
+                                ...prev,
+                                enabled: true,
+                              }));
+                            }}
+                            className="mt-2 px-3 py-1 bg-blue-600 text-white rounded-xl text-xs font-bold hover:bg-blue-500"
+                          >
+                            បើកថ្ងៃធ្វើការនេះវិញ
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* SECTION 4: SALARY & AI LEAVE QUOTA */}
@@ -1743,73 +2493,11 @@ export const StaffManagement: React.FC<StaffManagementProps> = ({
                 </div>
               </div>
 
-              {/* SECTION 5: SHIFT HOURS (២, ៤, ៦, ៨, ១២.៥ ម៉ោង) */}
+              {/* SECTION 5: LOGIN ACCESS CODE & PIN */}
               <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
                     <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">៥</span>
-                    <span>វេលាធ្វើការ (ចុច ១-Tap ជ្រើសរើស)</span>
-                  </div>
-                  <span className="text-xs font-bold text-blue-600 font-mono">
-                    {shiftHours} ម៉ោងក្នុងមួយថ្ងៃ
-                  </span>
-                </div>
-
-                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                  {SHIFT_OPTIONS.map((opt) => (
-                    <button
-                      key={opt.hours}
-                      type="button"
-                      onClick={() => handleShiftSelect(opt.hours)}
-                      className={`p-2.5 rounded-2xl border text-center transition font-semibold text-xs ${
-                        shiftHours === opt.hours
-                          ? "bg-blue-600 text-white border-blue-600 shadow-xs ring-2 ring-blue-500/20"
-                          : "bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100"
-                      }`}
-                    >
-                      <div className="font-bold text-xs">{opt.hours} ម៉ោង</div>
-                      <div className="text-[10px] opacity-80 mt-0.5 font-mono">
-                        {opt.defaultIn}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-
-                {/* Shift Check-in & Check-out inputs */}
-                <div className="grid grid-cols-2 gap-3 pt-1">
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
-                      ម៉ោងចូល (Shift In)
-                    </label>
-                    <input
-                      type="time"
-                      required
-                      value={checkInTime}
-                      onChange={(e) => setCheckInTime(e.target.value)}
-                      className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 block mb-1">
-                      ម៉ោងចេញ (Shift Out)
-                    </label>
-                    <input
-                      type="time"
-                      required
-                      value={checkOutTime}
-                      onChange={(e) => setCheckOutTime(e.target.value)}
-                      className="w-full text-xs px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-white focus:ring-2 focus:ring-blue-500 focus:outline-hidden font-mono"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* SECTION 6: LOGIN ACCESS CODE & PIN */}
-              <div className="space-y-3 pt-2 border-t border-slate-100 dark:border-slate-800">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200 font-battambang">
-                    <span className="w-5 h-5 rounded-full bg-blue-100 dark:bg-blue-950 text-blue-600 flex items-center justify-center text-[11px]">៦</span>
                     <span>លេខកូដចូលប្រើ & លេខសម្ងាត់ PIN (សម្រាប់បុគ្គលិក)</span>
                   </div>
                   <span className="text-[10px] text-emerald-600 font-bold bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded-full">

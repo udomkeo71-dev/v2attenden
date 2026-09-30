@@ -1,3 +1,7 @@
 scratch/
 *.log
 cloudflared.exe
+node_modules/
+.next/
+.env*.local
+*.tsbuildinfo
